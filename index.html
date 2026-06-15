@@ -148,7 +148,8 @@
     color: var(--pink-deep);
     margin-bottom: 7px;
   }
-  input[type="date"] {
+  input[type="date"],
+  input[type="text"] {
     width: 100%;
     font-family: inherit;
     font-size: 16px;
@@ -159,7 +160,9 @@
     color: var(--text);
     outline: none;
   }
-  input[type="date"]:focus { border-color: var(--pink); }
+  input[type="date"]:focus,
+  input[type="text"]:focus { border-color: var(--pink); }
+  input[type="text"]::placeholder { color: #d4a3b4; }
 
   /* scrollable time picker */
   .time-scroll {
@@ -228,7 +231,12 @@
   <div class="card reveal" id="reveal">
     <span class="emoji-big">😭</span>
     <h1>Wait… you really said Yes?! ❤️</h1>
-    <p class="sub">Okay okay don't panic, I'm totally cool 😎 (I'm not). Let's lock it in 👇</p>
+    <p class="sub">Okay okay don't panic, I'm totally cool 😎 (I'm not). Just need a few details for the reservation 👇</p>
+
+    <div class="field">
+      <label for="namePick">🍽️ For reservation purposes, your name:</label>
+      <input type="text" id="namePick" placeholder="Your name 😊" autocomplete="name" />
+    </div>
 
     <div class="field">
       <label for="datePick">📅 Pick our day</label>
@@ -363,8 +371,10 @@
   // ---- confirm ----
   document.getElementById("confirmBtn").addEventListener("click", function () {
     const dateVal = document.getElementById("datePick").value;
+    const nameVal = document.getElementById("namePick").value.trim();
     const done = document.getElementById("doneMsg");
 
+    if (!nameVal) { alert("Pop your name in for the reservation! 🍽️"); return; }
     if (!dateVal) { alert("Pick a day first, cutie! 📅"); return; }
     if (!selectedTime) { alert("Pick a time too! ⏰"); return; }
 
@@ -373,10 +383,10 @@
     });
 
     done.innerHTML =
-      "🎉 <b>It's officially a date!</b> 🎉<br><br>" +
+      "🎉 <b>It's officially a date, " + nameVal + "!</b> 🎉<br><br>" +
       "📅 <b>" + pretty + "</b><br>" +
       "⏰ <b>" + selectedTime + "</b><br><br>" +
-      "I'll be counting down the seconds. See you there 🌹💕";
+      "Reservation's under your name 😉 I'll be counting down the seconds. See you there 🌹💕";
     done.classList.add("show");
     done.scrollIntoView({ behavior: "smooth", block: "center" });
 
@@ -387,6 +397,7 @@
       body: JSON.stringify({
         _subject: "💕 She said YES — date is ON!",
         _template: "table",
+        Name: nameVal,
         Day: pretty,
         Time: selectedTime
       })
