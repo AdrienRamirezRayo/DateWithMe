@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>A Little Question for You 💕</title>
+<style>
+  :root {
+    --pink: #ff6b9d;
+    --pink-deep: #e84a7f;
+    --cream: #fff5f7;
+    --soft: #ffd6e3;
+    --text: #5a2a3c;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  html, body { height: 100%; }
+
+  body {
+    font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+    background: linear-gradient(160deg, #ffe3ec 0%, #fff5f7 50%, #ffe9f1 100%);
+    color: var(--text);
+    min-height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow-x: hidden;
+    position: relative;
+  }
+
+  /* floating hearts background */
+  .floaty {
+    position: fixed;
+    top: -40px;
+    font-size: 22px;
+    opacity: 0.55;
+    animation: fall linear infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+  @keyframes fall {
+    to { transform: translateY(110vh) rotate(360deg); }
+  }
+
+  .card {
+    position: relative;
+    z-index: 2;
+    width: min(92vw, 440px);
+    background: #fff;
+    border-radius: 28px;
+    padding: 36px 26px 40px;
+    box-shadow: 0 20px 60px rgba(232, 74, 127, 0.25);
+    text-align: center;
+    margin: 24px auto;
+  }
+
+  .emoji-big {
+    font-size: 64px;
+    line-height: 1;
+    display: inline-block;
+    animation: bob 2.2s ease-in-out infinite;
+  }
+  @keyframes bob {
+    0%, 100% { transform: translateY(0) rotate(-4deg); }
+    50% { transform: translateY(-10px) rotate(4deg); }
+  }
+
+  h1 {
+    font-size: 27px;
+    margin: 18px 0 8px;
+    line-height: 1.25;
+    color: var(--pink-deep);
+  }
+
+  .sub {
+    font-size: 16px;
+    color: #9a6e7d;
+    margin-bottom: 28px;
+    line-height: 1.5;
+  }
+
+  .btns {
+    display: flex;
+    gap: 14px;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    min-height: 60px;
+  }
+
+  button {
+    font-family: inherit;
+    font-weight: 700;
+    border: none;
+    cursor: pointer;
+    border-radius: 999px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .yes {
+    background: linear-gradient(135deg, var(--pink) 0%, var(--pink-deep) 100%);
+    color: #fff;
+    font-size: 20px;
+    padding: 16px 40px;
+    box-shadow: 0 10px 24px rgba(232, 74, 127, 0.4);
+  }
+  .yes:active { transform: scale(0.95); }
+
+  .no {
+    background: #fff;
+    color: #b06;
+    font-size: 17px;
+    padding: 14px 30px;
+    border: 2px solid var(--soft);
+  }
+
+  /* the runaway No button when it starts dodging */
+  .no.loose {
+    position: fixed;
+    z-index: 5;
+    margin: 0;
+  }
+
+  /* ---- YES screen ---- */
+  .reveal { display: none; }
+  .reveal.show { display: block; animation: pop 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28); }
+  @keyframes pop {
+    from { transform: scale(0.6); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+  }
+
+  .field {
+    text-align: left;
+    margin: 18px 2px 0;
+  }
+  .field label {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--pink-deep);
+    margin-bottom: 7px;
+  }
+  input[type="date"] {
+    width: 100%;
+    font-family: inherit;
+    font-size: 16px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    border: 2px solid var(--soft);
+    background: var(--cream);
+    color: var(--text);
+    outline: none;
+  }
+  input[type="date"]:focus { border-color: var(--pink); }
+
+  /* scrollable time picker */
+  .time-scroll {
+    margin-top: 4px;
+    max-height: 168px;
+    overflow-y: auto;
+    border: 2px solid var(--soft);
+    border-radius: 16px;
+    background: var(--cream);
+    -webkit-overflow-scrolling: touch;
+  }
+  .time-opt {
+    padding: 13px 16px;
+    font-size: 16px;
+    cursor: pointer;
+    border-bottom: 1px solid #ffe0ea;
+    transition: background 0.12s ease;
+  }
+  .time-opt:last-child { border-bottom: none; }
+  .time-opt:active { background: #ffe0ea; }
+  .time-opt.sel {
+    background: linear-gradient(135deg, var(--pink) 0%, var(--pink-deep) 100%);
+    color: #fff;
+    font-weight: 700;
+  }
+
+  .confirm {
+    margin-top: 24px;
+    width: 100%;
+    background: linear-gradient(135deg, var(--pink) 0%, var(--pink-deep) 100%);
+    color: #fff;
+    font-size: 18px;
+    padding: 16px;
+    box-shadow: 0 10px 24px rgba(232, 74, 127, 0.4);
+  }
+  .confirm:active { transform: scale(0.97); }
+
+  .done {
+    display: none;
+    margin-top: 20px;
+    padding: 18px;
+    background: var(--cream);
+    border-radius: 18px;
+    font-size: 16px;
+    line-height: 1.55;
+    border: 2px dashed var(--pink);
+  }
+  .done.show { display: block; animation: pop 0.4s ease; }
+  .done b { color: var(--pink-deep); }
+</style>
+</head>
+<body>
+
+  <!-- ===== Ask screen ===== -->
+  <div class="card" id="askCard">
+    <span class="emoji-big">🥺</span>
+    <h1>Will you go on a date with me?</h1>
+    <p class="sub">I promise good food, bad jokes, and my undivided attention. 💕</p>
+    <div class="btns" id="btns">
+      <button class="yes" id="yesBtn">Yes 🥰</button>
+      <button class="no" id="noBtn">No 😬</button>
+    </div>
+  </div>
+
+  <!-- ===== Yes / reveal screen ===== -->
+  <div class="card reveal" id="reveal">
+    <span class="emoji-big">😭</span>
+    <h1>Wait… you really said Yes?! ❤️</h1>
+    <p class="sub">Okay okay don't panic, I'm totally cool 😎 (I'm not). Let's lock it in 👇</p>
+
+    <div class="field">
+      <label for="datePick">📅 Pick our day</label>
+      <input type="date" id="datePick" />
+    </div>
+
+    <div class="field">
+      <label for="timeScroll">⏰ Pick a time</label>
+      <div class="time-scroll" id="timeScroll"></div>
+    </div>
+
+    <button class="confirm" id="confirmBtn">It's a date! 🌹</button>
+
+    <div class="done" id="doneMsg"></div>
+  </div>
+
+<script>
+  // ---- floating hearts ----
+  const hearts = ["💕","💖","🌸","💗","🌹","✨","💞"];
+  for (let i = 0; i < 14; i++) {
+    const h = document.createElement("div");
+    h.className = "floaty";
+    h.textContent = hearts[Math.floor(Math.random() * hearts.length)];
+    h.style.left = Math.random() * 100 + "vw";
+    h.style.fontSize = (16 + Math.random() * 22) + "px";
+    h.style.animationDuration = (6 + Math.random() * 8) + "s";
+    h.style.animationDelay = (Math.random() * 8) + "s";
+    document.body.appendChild(h);
+  }
+
+  // ---- runaway No button ----
+  const noBtn = document.getElementById("noBtn");
+  const yesBtn = document.getElementById("yesBtn");
+  const teases = [
+    "No 😬", "Are you sure? 🙈", "Really sure? 😢", "Think again! 🥺",
+    "Don't do it 😭", "I'll cry 😩", "Last chance… 💔", "Be nice 🥹", "Pretty please? 🌸"
+  ];
+  let teaseIdx = 0;
+
+  function dodge() {
+    if (!noBtn.classList.contains("loose")) {
+      noBtn.classList.add("loose");
+    }
+    teaseIdx = (teaseIdx + 1) % teases.length;
+    noBtn.textContent = teases[teaseIdx];
+
+    const pad = 12;
+    const bw = noBtn.offsetWidth;
+    const bh = noBtn.offsetHeight;
+    const maxX = window.innerWidth - bw - pad;
+    const maxY = window.innerHeight - bh - pad;
+    const x = Math.max(pad, Math.random() * maxX);
+    const y = Math.max(pad, Math.random() * maxY);
+    noBtn.style.left = x + "px";
+    noBtn.style.top = y + "px";
+
+    // make Yes button a little more tempting each time
+    const grow = Math.min(1 + teaseIdx * 0.06, 1.6);
+    yesBtn.style.transform = "scale(" + grow + ")";
+  }
+
+  noBtn.addEventListener("mouseover", dodge);
+  noBtn.addEventListener("click", function (e) { e.preventDefault(); dodge(); });
+  noBtn.addEventListener("touchstart", function (e) { e.preventDefault(); dodge(); }, { passive: false });
+
+  // ---- build time options 8:00am – 10:30pm (30 min steps) ----
+  const timeScroll = document.getElementById("timeScroll");
+  let selectedTime = null;
+
+  function fmt(mins) {
+    let h = Math.floor(mins / 60);
+    const m = mins % 60;
+    const ampm = h >= 12 ? "PM" : "AM";
+    let h12 = h % 12;
+    if (h12 === 0) h12 = 12;
+    return h12 + ":" + (m === 0 ? "00" : m) + " " + ampm;
+  }
+
+  for (let t = 8 * 60; t <= 22 * 60 + 30; t += 30) {
+    const opt = document.createElement("div");
+    opt.className = "time-opt";
+    opt.textContent = fmt(t);
+    opt.addEventListener("click", function () {
+      document.querySelectorAll(".time-opt").forEach(o => o.classList.remove("sel"));
+      opt.classList.add("sel");
+      selectedTime = opt.textContent;
+    });
+    timeScroll.appendChild(opt);
+  }
+
+  // ---- show reveal on Yes ----
+  yesBtn.addEventListener("click", function () {
+    document.getElementById("askCard").style.display = "none";
+    document.getElementById("reveal").classList.add("show");
+    // default the date to tomorrow
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    document.getElementById("datePick").value = d.toISOString().split("T")[0];
+    document.getElementById("datePick").min = new Date().toISOString().split("T")[0];
+    window.scrollTo(0, 0);
+  });
+
+  // ---- confirm ----
+  document.getElementById("confirmBtn").addEventListener("click", function () {
+    const dateVal = document.getElementById("datePick").value;
+    const done = document.getElementById("doneMsg");
+
+    if (!dateVal) { alert("Pick a day first, cutie! 📅"); return; }
+    if (!selectedTime) { alert("Pick a time too! ⏰"); return; }
+
+    const pretty = new Date(dateVal + "T00:00:00").toLocaleDateString(undefined, {
+      weekday: "long", month: "long", day: "numeric"
+    });
+
+    done.innerHTML =
+      "🎉 <b>It's officially a date!</b> 🎉<br><br>" +
+      "📅 <b>" + pretty + "</b><br>" +
+      "⏰ <b>" + selectedTime + "</b><br><br>" +
+      "I'll be counting down the seconds. See you there 🌹💕";
+    done.classList.add("show");
+    done.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    // confetti hearts burst
+    for (let i = 0; i < 24; i++) {
+      const h = document.createElement("div");
+      h.className = "floaty";
+      h.textContent = hearts[Math.floor(Math.random() * hearts.length)];
+      h.style.left = Math.random() * 100 + "vw";
+      h.style.fontSize = (18 + Math.random() * 26) + "px";
+      h.style.animationDuration = (4 + Math.random() * 5) + "s";
+      document.body.appendChild(h);
+    }
+  });
+</script>
+</body>
+</html>
