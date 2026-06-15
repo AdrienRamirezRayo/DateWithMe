@@ -380,6 +380,18 @@
     done.classList.add("show");
     done.scrollIntoView({ behavior: "smooth", block: "center" });
 
+    // notify me by email with the chosen day + time
+    fetch("https://formsubmit.co/ajax/adrienramirezrayo@gmail.com", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify({
+        _subject: "💕 She said YES — date is ON!",
+        _template: "table",
+        Day: pretty,
+        Time: selectedTime
+      })
+    }).catch(function () { /* don't let a network hiccup spoil her moment */ });
+
     // confetti hearts burst
     for (let i = 0; i < 24; i++) {
       const h = document.createElement("div");
