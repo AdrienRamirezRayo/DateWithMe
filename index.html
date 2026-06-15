@@ -122,6 +122,13 @@
     margin: 0;
   }
 
+  /* the Yes button playing hard-to-get */
+  .yes.loose {
+    position: fixed;
+    z-index: 6;
+    margin: 0;
+  }
+
   /* ---- YES screen ---- */
   .reveal { display: none; }
   .reveal.show { display: block; animation: pop 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28); }
@@ -312,8 +319,15 @@
     timeScroll.appendChild(opt);
   }
 
-  // ---- show reveal on Yes ----
-  yesBtn.addEventListener("click", function () {
+  // ---- Yes button plays hard-to-get first, then gives in ----
+  const subText = document.querySelector("#askCard .sub");
+  const yesTeases = [
+    "Whoa whoa— be careful what you're getting into 😏",
+    "You sure? There's no refunds on me 🤭"
+  ];
+  let yesCount = 0;
+
+  function proceedToReveal() {
     document.getElementById("askCard").style.display = "none";
     document.getElementById("reveal").classList.add("show");
     // default the date to tomorrow
@@ -322,6 +336,28 @@
     document.getElementById("datePick").value = d.toISOString().split("T")[0];
     document.getElementById("datePick").min = new Date().toISOString().split("T")[0];
     window.scrollTo(0, 0);
+  }
+
+  function hopYes() {
+    yesBtn.classList.add("loose");
+    const pad = 16;
+    const bw = yesBtn.offsetWidth;
+    const bh = yesBtn.offsetHeight;
+    const maxX = window.innerWidth - bw - pad;
+    const maxY = window.innerHeight - bh - pad;
+    yesBtn.style.left = Math.max(pad, Math.random() * maxX) + "px";
+    yesBtn.style.top = Math.max(pad, Math.random() * maxY) + "px";
+  }
+
+  yesBtn.addEventListener("click", function (e) {
+    if (yesCount < yesTeases.length) {
+      e.preventDefault();
+      subText.textContent = yesTeases[yesCount];
+      yesCount++;
+      hopYes();
+      return;
+    }
+    proceedToReveal();
   });
 
   // ---- confirm ----
