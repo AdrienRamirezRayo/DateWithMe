@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Join LeadRush</title>
   <link rel="icon" href="/img/icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/img/icon-192.png">
+  <meta name="theme-color" content="#07070c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="LeadRush">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/app.css">
@@ -12,18 +17,39 @@
 <body class="auth">
   <form class="auth-card" id="form">
     <a href="/" class="logo"><img src="/img/logo.png" alt="LeadRush"></a>
-    <h1>Start getting leads</h1>
-    <p class="muted">Create your agent account. An admin will approve you before leads start flowing.</p>
+    <h1 id="heading">Start getting calls</h1>
+    <div class="seg role-seg" id="roleSeg">
+      <button type="button" data-role="agent" class="on">I'm an agent</button>
+      <button type="button" data-role="supplier">I sell calls</button>
+    </div>
+    <input type="hidden" name="role" id="role" value="agent">
+    <p class="muted" id="blurb">Create your agent account. An admin will approve you, then you fund your wallet and pick campaigns.</p>
+    <div class="field supplier-only" hidden><label for="company">Company</label><input class="input" id="company" name="company" autocomplete="organization"></div>
     <div class="field"><label for="name">Full name</label><input class="input" id="name" name="name" autocomplete="name" required></div>
     <div class="field"><label for="email">Email</label><input class="input" id="email" name="email" type="email" autocomplete="email" required></div>
     <div class="field"><label for="phone">Mobile phone <span class="muted">(live calls + text alerts ring here)</span></label><input class="input" id="phone" name="phone" type="tel" autocomplete="tel" required></div>
-    <div class="field"><label for="states">States you're licensed in</label><input class="input" id="states" name="states" placeholder="e.g. TX, FL, GA"></div>
+    <div class="field agent-only"><label for="states">States you're licensed in</label><input class="input" id="states" name="states" placeholder="e.g. TX, FL, GA"></div>
     <div class="field"><label for="password">Password</label><input class="input" id="password" name="password" type="password" minlength="8" autocomplete="new-password" required></div>
     <p class="error" id="err"></p>
     <button class="btn" type="submit">Create Account <span class="arrow">→</span></button>
     <p class="muted small">Already have an account? <a href="/login">Log in</a></p>
   </form>
   <script src="/js/auth.js"></script>
-  <script>authForm('/api/auth/signup');</script>
+  <script>
+    authForm('/api/auth/signup');
+    const setRole = (role) => {
+      document.getElementById('role').value = role;
+      document.querySelectorAll('#roleSeg button').forEach((b) => b.classList.toggle('on', b.dataset.role === role));
+      document.querySelectorAll('.supplier-only').forEach((el) => (el.hidden = role !== 'supplier'));
+      document.querySelectorAll('.agent-only').forEach((el) => (el.hidden = role === 'supplier'));
+      document.getElementById('heading').textContent = role === 'supplier' ? 'Sell your call traffic' : 'Start getting calls';
+      document.getElementById('blurb').textContent = role === 'supplier'
+        ? 'Create a supplier account. Once approved, submit campaigns, get tracking numbers, and earn on every billable call.'
+        : 'Create your agent account. An admin will approve you, then you fund your wallet and pick campaigns.';
+      document.querySelector('label[for=phone] .muted').hidden = role === 'supplier';
+    };
+    document.querySelectorAll('#roleSeg button').forEach((b) => (b.onclick = () => setRole(b.dataset.role)));
+    if (new URLSearchParams(location.search).get('type') === 'supplier') setRole('supplier');
+  </script>
 </body>
 </html>

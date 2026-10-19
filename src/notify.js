@@ -1,4 +1,43 @@
-import { db } from './db.js';
+import webpush from 'web-push';
+import { db, getSetting, setSetting } from './db.js';
+
+// Web Push (phone + desktop notifications even when the app is closed).
+// VAPID keys are generated once and kept in the settings table.
+if (!getSetting('vapid_public')) {
+  const keys = webpush.generateVAPIDKeys();
+  setSetting('vapid_public', keys.publicKey);
+  setSetting('vapid_private', keys.privateKey);
+}
+webpush.setVapidDetails(
+  `mailto:${process.env.ADMIN_EMAIL || 'admin@leadrush.app'}`,
+  getSetting('vapid_public'),
+  getSetting('vapid_private'),
+);
+export const vapidPublicKey = () => getSetting('vapid_public');
+
+export function savePushSubscription(userId, sub) {
+  if (!sub?.endpoint || !/^https:\/\//.test(sub.endpoint) || !sub.keys?.p256dh || !sub.keys?.auth) return false;
+  db.prepare(`INSERT INTO push_subscriptions (user_id, endpoint, keys) VALUES (?, ?, ?)
+    ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, keys = excluded.keys`)
+    .run(userId, sub.endpoint, JSON.stringify({ p256dh: sub.keys.p256dh, auth: sub.keys.auth }));
+  return true;
+}
+
+export function removePushSubscription(userId, endpoint) {
+  db.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?').run(userId, endpoint);
+}
+
+export function sendPush(userId, { title, body, url = '/dashboard', tag }) {
+  if (process.env.NODE_ENV === 'test') return;
+  const subs = db.prepare('SELECT * FROM push_subscriptions WHERE user_id = ?').all(userId);
+  for (const s of subs) {
+    webpush.sendNotification({ endpoint: s.endpoint, keys: JSON.parse(s.keys) }, JSON.stringify({ title, body, url, tag }), { TTL: 600 })
+      .catch((err) => {
+        if (err.statusCode === 404 || err.statusCode === 410) db.prepare('DELETE FROM push_subscriptions WHERE id = ?').run(s.id);
+        else console.error('Push failed', err.statusCode || err.message);
+      });
+  }
+}
 
 // Live dashboard updates over Server-Sent Events, keyed by user id.
 const streams = new Map();

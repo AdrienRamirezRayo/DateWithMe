@@ -53,13 +53,14 @@ const srcLabel = (l) => {
   return `<span class="src">${icon} ${h(l.utm_source || l.source)}${camp ? ` · ${camp}` : ''}</span>`;
 };
 const isAdmin = () => state.me?.role === 'admin';
+const isSupplier = () => state.me?.role === 'supplier';
 
 // ---------- shell ----------
 async function boot() {
   const { user, states, statuses, verticals } = await api('/api/me');
   Object.assign(state, { me: user, states, statuses, verticals });
   renderMe();
-  document.querySelectorAll('.admin-only').forEach((el) => (el.hidden = !isAdmin()));
+  renderNav();
   window.addEventListener('hashchange', route);
   route();
   connectEvents();
@@ -78,8 +79,43 @@ function renderMe() {
   $('#avail').setAttribute('aria-checked', on);
   $('#availText').textContent = on ? 'Receiving leads' : 'Offline';
   const bal = state.me.balance_cents;
-  $('#balance').textContent = cents(bal);
-  $('#balance').classList.toggle('low', bal < 5000);
+  if (isSupplier()) {
+    $('#avail').hidden = true;
+    $('#balance').textContent = `Owed ${cents(bal)}`;
+    $('#balance').href = '#payouts';
+    $('#balance').classList.add('owed');
+  } else {
+    $('#balance').textContent = cents(bal);
+    $('#balance').classList.toggle('low', bal < 5000);
+  }
+  $('#meRole').textContent = { admin: 'Admin', agent: 'Agent', supplier: state.me.company || 'Supplier' }[state.me.role];
+}
+
+// Sidebar on desktop, bottom tab bar on phones — both built from the same per-role list.
+const NAV = {
+  admin: [['overview', '📊', 'Overview'], ['marketplace', '🛒', 'Marketplace'], ['calls', '📞', 'Calls', 'disputeCount'], ['leads', '⚡', 'Leads', 'newCount'],
+    ['wallet', '💳', 'Wallet'], ['agents', '👥', 'Agents', 'pendingCount'], ['suppliers', '🏭', 'Suppliers', 'supplierCount'], ['sources', '🎯', 'Ad Sources'], ['settings', '⚙️', 'Settings']],
+  agent: [['overview', '📊', 'Home'], ['marketplace', '🛒', 'Marketplace'], ['calls', '📞', 'Calls'], ['leads', '⚡', 'Leads', 'newCount'], ['wallet', '💳', 'Wallet'], ['settings', '⚙️', 'Settings']],
+  supplier: [['overview', '📊', 'Overview'], ['campaigns', '📣', 'Campaigns'], ['calls', '📞', 'Calls'], ['payouts', '💸', 'Payouts'], ['settings', '⚙️', 'Settings']],
+};
+const TABS = { admin: ['overview', 'calls', 'leads', 'marketplace'], agent: ['overview', 'marketplace', 'calls', 'leads'], supplier: ['overview', 'campaigns', 'calls', 'payouts'] };
+const navFor = () => NAV[state.me.role] || NAV.agent;
+
+function renderNav() {
+  const items = navFor();
+  $('#nav').innerHTML = items.map(([v, icon, label, badge]) =>
+    `<a href="#${v}" class="nav-item" data-view="${v}">${icon} ${label}${badge ? ` <span class="count" id="${badge}" hidden></span>` : ''}</a>`).join('');
+  const tabs = TABS[state.me.role] || TABS.agent;
+  $('#tabbar').innerHTML = items.filter(([v]) => tabs.includes(v)).map(([v, icon, label, badge]) =>
+    `<a href="#${v}" class="tab" data-view="${v}"><span class="tab-ico">${icon}${badge ? `<i class="dot-badge" data-badge="${badge}" hidden></i>` : ''}</span>${label === 'Overview' ? 'Home' : label}</a>`).join('')
+    + '<button class="tab" id="moreTab"><span class="tab-ico">☰</span>More</button>';
+  $('#moreTab').onclick = () => $('#side').classList.toggle('open');
+}
+
+function setBadge(id, n) {
+  const el = document.getElementById(id);
+  if (el) { el.hidden = !n; el.textContent = n; }
+  document.querySelectorAll(`[data-badge="${id}"]`).forEach((d) => (d.hidden = !n));
 }
 
 async function toggleAvail() {
@@ -87,30 +123,38 @@ async function toggleAvail() {
     const { user } = await api('/api/me', { method: 'PATCH', body: { available: !state.me.available } });
     state.me = user;
     renderMe();
-    if (user.available && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+    // First time going live: offer phone/desktop notifications for new leads.
+    if (user.available && pushSupported() && Notification.permission === 'default' && !(isIOS() && !isStandalone())) enablePush().catch(() => {});
   } catch (e) { toast('Heads up', e.message); }
 }
-$('#avail').onclick = toggleAvail;
+$('#avail').onclick = () => toggleAvail().then(() => { if (state.view === 'overview') render(); });
 $('#avail').onkeydown = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); toggleAvail(); } };
 $('#logout').onclick = async () => { await api('/api/auth/logout', { method: 'POST' }); location.href = '/login'; };
 $('#menuBtn').onclick = () => $('#side').classList.toggle('open');
 $('#scrim').onclick = closeDrawer;
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
 
-const VIEWS = { overview: 'Overview', marketplace: 'Marketplace', calls: 'Calls', leads: 'Leads', wallet: 'Wallet', agents: 'Agents', sources: 'Ad Sources', settings: 'Settings' };
 function route() {
   let view = location.hash.slice(1) || 'overview';
-  if (!VIEWS[view] || (['agents', 'sources'].includes(view) && !isAdmin())) view = 'overview';
+  // Deep link from a push notification: #lead-123
+  const leadLink = view.match(/^lead-(\d+)$/);
+  if (leadLink) { history.replaceState(null, '', '#leads'); view = 'leads'; setTimeout(() => openLead(+leadLink[1]), 300); }
+  const entry = navFor().find(([v]) => v === view) || navFor()[0];
+  view = entry[0];
   state.view = view;
-  $('#title').textContent = VIEWS[view];
-  document.querySelectorAll('.nav-item').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
+  $('#title').textContent = entry[2] === 'Home' ? 'Home' : entry[2];
+  document.querySelectorAll('.nav-item, .tab[data-view]').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
   $('#side').classList.remove('open');
   render();
 }
 
 function render() {
-  const fn = { overview: renderOverview, marketplace: renderMarketplace, calls: renderCalls, leads: renderLeads, wallet: renderWallet, agents: renderAgents, sources: renderSources, settings: renderSettings }[state.view];
-  fn().catch((e) => { $('#view').innerHTML = `<div class="empty">${h(e.message)}</div>`; });
+  const fn = {
+    overview: isSupplier() ? renderSupplierOverview : renderOverview, marketplace: renderMarketplace, campaigns: renderMarketplace,
+    calls: renderCalls, leads: renderLeads, wallet: renderWallet, payouts: renderWallet, agents: renderAgents,
+    suppliers: renderSuppliers, sources: renderSources, settings: renderSettings,
+  }[state.view];
+  fn().then(labelTables).catch((e) => { $('#view').innerHTML = `<div class="empty">${h(e.message)}</div>`; });
 }
 
 function pendingBanner() {
@@ -122,18 +166,35 @@ function pendingBanner() {
 }
 
 async function refreshBadges() {
+  if (isSupplier()) return;
   const { total } = await api('/api/leads?status=new&limit=1' + (isAdmin() ? '&scope=mine' : ''));
-  $('#newCount').hidden = !total;
-  $('#newCount').textContent = total;
+  setBadge('newCount', total);
   if (isAdmin()) {
-    const { agents } = await api('/api/agents');
-    const pending = agents.filter((a) => a.status === 'pending').length;
-    $('#pendingCount').hidden = !pending;
-    $('#pendingCount').textContent = pending;
-    const { calls } = await api('/api/calls?dispute=pending');
-    $('#disputeCount').hidden = !calls.length;
-    $('#disputeCount').textContent = calls.length;
+    const [{ agents }, { calls }, { suppliers }] = await Promise.all([api('/api/agents'), api('/api/calls?dispute=pending'), api('/api/suppliers')]);
+    setBadge('pendingCount', agents.filter((a) => a.status === 'pending' && a.role !== 'supplier').length);
+    setBadge('disputeCount', calls.length);
+    setBadge('supplierCount', suppliers.filter((x) => x.status === 'pending').length + suppliers.reduce((n, x) => n + x.pending_campaigns, 0));
   }
+}
+
+// On phones, tables turn into stacked cards; each cell needs its column name as a label.
+function labelTables() {
+  document.querySelectorAll('#view table').forEach((t) => {
+    const heads = [...t.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+    t.querySelectorAll('tbody tr').forEach((tr) => [...tr.children].forEach((td, i) => {
+      if (td.hasAttribute('colspan')) return;
+      if (heads[i]) td.dataset.label = heads[i];
+      // Keep a cell's text and sub-line together as one block (moving nodes keeps their event handlers).
+      if (!td.querySelector(':scope > .cell')) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.append(...td.childNodes);
+        td.append(cell);
+      }
+      const empty = !td.querySelector('button, audio, input, select, a') && ['', '—'].includes(td.textContent.trim());
+      td.classList.toggle('blank', empty);
+    }));
+  });
 }
 
 // ---------- overview ----------
@@ -145,8 +206,16 @@ async function renderOverview() {
   const t = stats.totals;
   const c = stats.calls;
   const v = $('#view');
+  const live = state.me.available;
   v.innerHTML = `
     ${pendingBanner()}
+    ${state.me.status === 'active' ? `<div class="live-card ${live ? 'on' : ''}">
+      <div>
+        <b>${live ? '🟢 You\'re live' : '⚪ You\'re offline'}</b>
+        <span>${live ? `Calls ring <b>${h(phone(state.me.phone))}</b> and new leads come to you.` : 'Go live to start receiving calls and leads.'}</span>
+      </div>
+      <button class="btn ${live ? 'ghost' : ''}" id="liveBtn">${live ? 'Go offline' : '⚡ Go live'}</button>
+    </div>` : ''}
     <div class="toolbar">
       <div class="seg" id="range">${[7, 30, 90].map((d) => `<button data-d="${d}" class="${d === state.days ? 'on' : ''}">${d} days</button>`).join('')}</div>
       <div class="grow"></div>
@@ -185,6 +254,7 @@ async function renderOverview() {
     </div>` : ''}
   `;
   v.querySelectorAll('#range button').forEach((b) => (b.onclick = () => { state.days = +b.dataset.d; render(); }));
+  if ($('#liveBtn')) $('#liveBtn').onclick = async () => { await toggleAvail(); renderOverview().then(labelTables); };
   bindFeed();
 }
 
@@ -199,7 +269,7 @@ function bindFeed() {
   document.querySelectorAll('#feed li').forEach((li) => (li.onclick = () => openLead(+li.dataset.id)));
 }
 
-function chart(daily, days) {
+function chart(daily, days, [lbl, soldLbl] = ['Leads', 'Sold']) {
   const map = Object.fromEntries(daily.map((d) => [d.day, d]));
   const series = [];
   for (let i = days - 1; i >= 0; i--) {
@@ -209,12 +279,12 @@ function chart(daily, days) {
   const max = Math.max(1, ...series.map((s) => s.leads));
   const fmt = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return `<div class="chart">${series.map((s) => `
-    <div class="bar" data-tip="${fmt(s.day)}: ${s.leads} leads, ${s.sold} sold">
+    <div class="bar" data-tip="${fmt(s.day)}: ${s.leads} ${lbl.toLowerCase()}, ${s.sold} ${soldLbl.toLowerCase()}">
       <span style="height:${((s.leads - s.sold) / max) * 100}%"></span>
       <span class="sold" style="height:${(s.sold / max) * 100}%"></span>
     </div>`).join('')}</div>
     <div class="chart-x"><span>${fmt(series[0].day)}</span><span>Today</span></div>
-    <div class="legend"><span><i style="background:var(--red)"></i>Leads</span><span><i style="background:var(--green)"></i>Sold</span></div>`;
+    <div class="legend"><span><i style="background:var(--red)"></i>${lbl}</span><span><i style="background:var(--green)"></i>${soldLbl}</span></div>`;
 }
 
 // ---------- leads ----------
@@ -380,7 +450,7 @@ function openNewLead() {
 
 // ---------- agents (admin) ----------
 async function renderAgents() {
-  const { agents } = await api('/api/agents');
+  const agents = (await api('/api/agents')).agents.filter((a) => a.role !== 'supplier');
   state.agents = agents;
   const v = $('#view');
   v.innerHTML = `
@@ -482,15 +552,22 @@ async function renderSettings() {
         <h2>Your profile</h2>
         <div class="form-grid">
           <div class="field"><label>Name</label><input class="input" name="name" value="${h(me.name)}"></div>
-          <div class="field"><label>Mobile phone (calls + texts ring here)</label><input class="input" name="phone" value="${h(phone(me.phone))}"></div>
+          <div class="field"><label>${isSupplier() ? 'Phone' : 'Mobile phone (calls + texts ring here)'}</label><input class="input" name="phone" value="${h(phone(me.phone))}"></div>
+          ${isSupplier() ? `<div class="field full"><label>Company</label><input class="input" name="company" value="${h(me.company)}"></div>` : `
           <div class="field"><label>Licensed states (blank = all)</label><input class="input" name="states" value="${h(me.states)}" placeholder="TX, FL, GA"></div>
           <div class="field"><label>Your time zone (for call hours)</label><select class="input" name="timezone">${['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu'].map((z) => `<option ${z === me.timezone ? 'selected' : ''}>${z}</option>`).join('')}</select></div>
-          <label class="check-row full"><input type="checkbox" name="sms_alerts" ${me.sms_alerts ? 'checked' : ''}> Text me when a new lead is assigned</label>
+          <label class="check-row full"><input type="checkbox" name="sms_alerts" ${me.sms_alerts ? 'checked' : ''}> Text me when a new lead is assigned</label>`}
         </div>
         <p class="error" id="pErr"></p>
         <button class="btn sm" type="submit">Save profile</button>
       </form>
+      ${mobileCard()}
       ${admin ? `
+      <form class="card" id="feeForm">
+        <h2>🏭 Supplier payouts</h2>
+        <p>LeadRush keeps this share of every billed call on a supplier's campaign; the rest is owed to the supplier.</p>
+        <div class="row-inline" style="max-width:320px"><input class="input" name="fee_pct" type="number" min="0" max="100" step="0.5" value="${admin.fee_pct}"><span style="align-self:center">%</span><button class="btn sm">Save</button></div>
+      </form>
       <div class="card">
         <h2>📝 Your quote page</h2>
         <p>This is the page your ads send people to. Build tagged links in <a href="#sources" class="red">Ad Sources</a>.</p>
@@ -520,11 +597,22 @@ async function renderSettings() {
     e.preventDefault();
     const f = new FormData(e.target);
     try {
-      const { user } = await api('/api/me', { method: 'PATCH', body: { name: f.get('name'), phone: f.get('phone'), states: f.get('states'), timezone: f.get('timezone'), sms_alerts: f.has('sms_alerts') } });
+      const body = isSupplier()
+        ? { name: f.get('name'), phone: f.get('phone'), company: f.get('company') }
+        : { name: f.get('name'), phone: f.get('phone'), states: f.get('states'), timezone: f.get('timezone'), sms_alerts: f.has('sms_alerts') };
+      const { user } = await api('/api/me', { method: 'PATCH', body });
       state.me = user;
       renderMe();
       toast('Saved', 'Profile updated', true);
     } catch (err) { $('#pErr').textContent = err.message; }
+  };
+  bindMobileCard();
+  if ($('#feeForm')) $('#feeForm').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const { fee_pct } = await api('/api/settings/fee', { method: 'PUT', body: { fee_pct: e.target.fee_pct.value } });
+      toast('Saved', `Platform fee is ${fee_pct}%`, true);
+    } catch (err) { toast('Could not save', err.message); }
   };
   if ($('#rotate')) $('#rotate').onclick = async () => {
     if (!confirm('Rotate the key? Anything using the old key (Zapier, vendors) will stop working until updated.')) return;
@@ -538,7 +626,9 @@ async function renderSettings() {
 const VERT_ICON = { final_expense: '🕊️', medicare: '🩺', aca: '🏥', term_life: '🛡️', mortgage: '🏠' };
 
 async function renderMarketplace() {
-  const { campaigns } = await api('/api/campaigns');
+  const { campaigns, fee_pct: feePct } = await api('/api/campaigns');
+  const sup = isSupplier();
+  const canEdit = isAdmin() || sup;
   state.campaigns = campaigns;
   const v = $('#view');
   const verts = [...new Set(campaigns.map((c) => c.vertical))];
@@ -549,35 +639,37 @@ async function renderMarketplace() {
     <div class="toolbar">
       <div class="seg" id="vertSeg"><button data-v="" class="${!filter ? 'on' : ''}">All</button>${verts.map((x) => `<button data-v="${x}" class="${x === filter ? 'on' : ''}">${h(state.verticals[x])}</button>`).join('')}</div>
       <div class="grow"></div>
-      <span class="muted small">Pay only for calls that pass the billable time. No subscriptions, no minimums.</span>
-      ${isAdmin() ? '<button class="btn sm" id="newCamp">+ New campaign</button>' : ''}
+      <span class="muted small">${sup ? `You earn ${100 - feePct}% of each billable call. New campaigns are reviewed before going live.` : 'Pay only for calls that pass the billable time. No subscriptions, no minimums.'}</span>
+      ${canEdit ? '<button class="btn sm" id="newCamp">+ New campaign</button>' : ''}
     </div>
     <div class="market">${shown.map((c) => {
       const on = c.sub_id && c.sub_active;
-      return `<article class="camp ${on ? 'on' : ''} ${c.status === 'paused' ? 'paused' : ''}" data-id="${c.id}">
+      return `<article class="camp ${on ? 'on' : ''} ${c.status === 'paused' ? 'paused' : ''} ${c.status === 'pending' ? 'review' : ''}" data-id="${c.id}">
         <header>
           <span class="vert">${VERT_ICON[c.vertical] || '📞'} ${h(state.verticals[c.vertical])}</span>
-          ${c.status === 'paused' ? '<span class="pill lost">Paused</span>' : on ? '<span class="pill active">Buying</span>' : ''}
+          ${c.status === 'pending' ? '<span class="pill pending">In review</span>' : c.status === 'paused' ? '<span class="pill lost">Paused</span>' : on ? '<span class="pill active">Buying</span>' : sup ? '<span class="pill active">Live</span>' : ''}
         </header>
         <h3>${h(c.name)}</h3>
-        ${c.supplier ? `<p class="muted small">by ${h(c.supplier)}</p>` : ''}
+        ${c.supplier && !sup ? `<p class="muted small">by ${h(c.supplier)}</p>` : ''}
         <div class="price">${cents(c.price_cents)}<span>/call</span></div>
+        ${sup ? `<p class="muted small" style="margin-top:-4px">You earn <b class="pos">${cents(Math.round(c.price_cents * (100 - feePct) / 100))}</b> per billable call</p>` : ''}
         <ul class="terms">
           <li>⏱ Billable after <b>${mmss(c.billable_seconds)}</b></li>
           <li>📍 ${c.states ? h(c.states.split(',').join(', ')) : 'Nationwide'}</li>
           ${c.description ? `<li>💬 ${h(c.description)}</li>` : ''}
           ${on ? `<li>📅 ${h(c.days.split('').map((d) => DAY_NAMES[d]).join(' '))} · ${hourLabel(c.start_hour)}–${hourLabel(c.end_hour)}</li>
           <li>🎯 ${c.calls_today}/${c.daily_cap} billable calls today</li>` : ''}
-          ${isAdmin() ? `<li class="admin-line">👥 ${c.buyers} buyer${c.buyers === 1 ? '' : 's'} · ${c.calls_30d} calls (30d) · ${c.phone_number ? h(phone(c.phone_number)) : '<span class="red">no number</span>'}</li>` : ''}
+          ${canEdit ? `<li class="admin-line">👥 ${c.buyers} buyer${c.buyers === 1 ? '' : 's'} · ${c.billable_30d}/${c.calls_30d} billable (30d) · ${c.phone_number ? `📞 ${h(phone(c.phone_number))}` : '<span class="red">no number yet</span>'}</li>` : ''}
         </ul>
         <footer>
-          ${c.status === 'active' ? `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${!!on}" tabindex="0" data-toggle title="Buy calls from this campaign"></div>
+          ${sup ? `<span class="small muted">${c.status === 'pending' ? 'Waiting for LeadRush to assign a number and approve' : c.status === 'paused' ? 'Paused — no calls route' : 'Send traffic to the number above'}</span>`
+            : c.status === 'active' ? `<div class="switch ${on ? 'on' : ''}" role="switch" aria-checked="${!!on}" tabindex="0" data-toggle title="Buy calls from this campaign"></div>
           <span class="small">${on ? 'Buying calls' : 'Not buying'}</span>
-          <button class="btn ghost sm" data-filters>Filters</button>` : '<span class="muted small">Not taking buyers right now</span>'}
-          ${isAdmin() ? '<button class="btn ghost sm" data-edit>Edit</button>' : ''}
+          <button class="btn ghost sm" data-filters>Filters</button>` : `<span class="muted small">${c.status === 'pending' ? 'Submitted by supplier' : 'Not taking buyers right now'}</span>`}
+          ${isAdmin() && c.status === 'pending' ? '<button class="btn sm" data-edit>Review</button>' : canEdit ? '<button class="btn ghost sm" data-edit>Edit</button>' : ''}
         </footer>
       </article>`;
-    }).join('') || `<div class="empty">${isAdmin() ? 'No campaigns yet. Create one for each tracking number your ad guy or suppliers run.' : 'No campaigns are open right now. Check back soon.'}</div>`}</div>`;
+    }).join('') || `<div class="empty">${isAdmin() ? 'No campaigns yet. Create one for each tracking number your ad guy or suppliers run.' : sup ? 'No campaigns yet. Create one for each vertical you run traffic for.' : 'No campaigns are open right now. Check back soon.'}</div>`}</div>`;
 
   v.querySelectorAll('#vertSeg button').forEach((b) => (b.onclick = () => { state.vertFilter = b.dataset.v; renderMarketplace(); }));
   if ($('#newCamp')) $('#newCamp').onclick = () => openCampaignForm();
@@ -640,34 +732,46 @@ function openFilters(c) {
   };
 }
 
-function openCampaignForm(c = {}) {
+async function openCampaignForm(c = {}) {
+  const admin = isAdmin();
+  // Suppliers can only change pricing while a campaign is still in review.
+  const locked = !admin && c.id && c.status !== 'pending';
+  const dis = locked ? 'disabled' : '';
+  const suppliers = admin ? (await api('/api/suppliers')).suppliers.filter((x) => x.status === 'active') : [];
+  const statusField = admin
+    ? `<div class="field full"><label>Status</label><select class="input" name="status">${['pending', 'active', 'paused'].map((x) => `<option value="${x}" ${x === (c.status || 'active') ? 'selected' : ''}>${{ pending: 'In review', active: 'Live', paused: 'Paused' }[x]}</option>`).join('')}</select></div>`
+    : c.id && c.status !== 'pending' ? `<label class="check-row full"><input type="checkbox" name="paused" ${c.status === 'paused' ? 'checked' : ''}> Paused (no calls route to buyers)</label>` : '';
   openDrawer(`
-    <div class="drawer-head"><h2>${c.id ? 'Edit campaign' : 'New campaign'}</h2><button class="x" id="closeD" aria-label="Close">×</button></div>
+    <div class="drawer-head"><h2>${c.status === 'pending' && admin ? 'Review campaign' : c.id ? 'Edit campaign' : 'New campaign'}</h2><button class="x" id="closeD" aria-label="Close">×</button></div>
     <form class="drawer-body" id="campForm">
+      ${!admin && !c.id ? '<p class="muted small" style="margin:0">Submit your campaign and LeadRush will assign a tracking number and approve it. Then point your ads at that number.</p>' : ''}
+      ${locked ? '<p class="muted small" style="margin:0">Pricing is locked while the campaign is live. Contact LeadRush to change it.</p>' : ''}
       <div class="form-grid">
-        <div class="field full"><label>Name</label><input class="input" name="name" value="${h(c.name)}" placeholder="Final Expense — Facebook" required></div>
-        <div class="field"><label>Vertical</label><select class="input" name="vertical">${Object.entries(state.verticals).map(([k, l]) => `<option value="${k}" ${k === c.vertical ? 'selected' : ''}>${h(l)}</option>`).join('')}</select></div>
-        <div class="field"><label>Supplier</label><input class="input" name="supplier" value="${h(c.supplier)}" placeholder="Your ad guy / vendor"></div>
-        <div class="field"><label>Price per call ($)</label><input class="input" type="number" min="1" step="0.01" name="price" value="${c.price_cents ? c.price_cents / 100 : ''}" required></div>
-        <div class="field"><label>Billable after (seconds)</label><input class="input" type="number" min="0" name="billable_seconds" value="${c.billable_seconds ?? 90}"></div>
-        <div class="field full"><label>Twilio tracking number</label><input class="input" name="phone_number" value="${h(c.phone_number ? phone(c.phone_number) : '')}" placeholder="(555) 123-4567"></div>
+        <div class="field full"><label>Name</label><input class="input" name="name" value="${h(c.name)}" placeholder="Final Expense — Facebook" required ${dis}></div>
+        <div class="field"><label>Vertical</label><select class="input" name="vertical" ${dis}>${Object.entries(state.verticals).map(([k, l]) => `<option value="${k}" ${k === c.vertical ? 'selected' : ''}>${h(l)}</option>`).join('')}</select></div>
+        ${admin ? `<div class="field"><label>Supplier</label><select class="input" name="supplier_id"><option value="">House (no payout)</option>${suppliers.map((x) => `<option value="${x.id}" ${x.id === c.supplier_id ? 'selected' : ''}>${h(x.company || x.name)}</option>`).join('')}</select></div>` : '<div></div>'}
+        <div class="field"><label>Price per call ($)</label><input class="input" type="number" min="1" step="0.01" name="price" value="${c.price_cents ? c.price_cents / 100 : ''}" required ${dis}></div>
+        <div class="field"><label>Billable after (seconds)</label><input class="input" type="number" min="0" name="billable_seconds" value="${c.billable_seconds ?? 90}" ${dis}></div>
+        ${admin ? `<div class="field full"><label>Twilio tracking number</label><input class="input" name="phone_number" value="${h(c.phone_number ? phone(c.phone_number) : '')}" placeholder="(555) 123-4567"></div>` : ''}
         <div class="field full"><label>States calls come from (blank = nationwide)</label><input class="input" name="states" value="${h(c.states)}" placeholder="TX, FL, GA"></div>
         <div class="field full"><label>Description for buyers</label><textarea class="input" name="description" rows="2" placeholder="Ages 50–80, live transfer, pre-qualified">${h(c.description)}</textarea></div>
-        ${c.id ? `<label class="check-row full"><input type="checkbox" name="paused" ${c.status === 'paused' ? 'checked' : ''}> Paused (no calls route, hidden from agents)</label>` : ''}
+        ${statusField}
       </div>
       <p class="error" id="cErr"></p>
-      <button class="btn" type="submit">${c.id ? 'Save campaign' : 'Create campaign'}</button>
+      <button class="btn" type="submit">${c.status === 'pending' && admin ? 'Save' : c.id ? 'Save campaign' : admin ? 'Create campaign' : 'Submit for review'}</button>
     </form>`);
   $('#closeD').onclick = closeDrawer;
   $('#campForm').onsubmit = async (e) => {
     e.preventDefault();
     const body = Object.fromEntries(new FormData(e.target));
-    if (c.id) body.status = body.paused ? 'paused' : 'active';
+    if ('paused' in body || (!admin && c.id && c.status !== 'pending')) body.status = body.paused ? 'paused' : 'active';
     delete body.paused;
     try {
       await api(c.id ? `/api/campaigns/${c.id}` : '/api/campaigns', { method: c.id ? 'PATCH' : 'POST', body });
       closeDrawer();
-      renderMarketplace();
+      if (!admin && !c.id) toast('Submitted', 'We\'ll review it and assign a tracking number.', true);
+      render();
+      refreshBadges();
     } catch (err) { $('#cErr').textContent = err.message; }
   };
 }
@@ -677,14 +781,16 @@ async function renderCalls() {
   const pendingOnly = isAdmin() && state.callsFilter === 'pending';
   const { calls, dispute_window_hours: windowH } = await api(`/api/calls${pendingOnly ? '?dispute=pending' : ''}`);
   const v = $('#view');
+  const sup = isSupplier();
   const disputeCell = (c) => {
     if (c.dispute_status === 'pending') {
+      if (sup) return `<span class="pill pending" title="${h(c.dispute_reason)}">Return requested</span>`;
       return isAdmin()
         ? `<span class="pill pending" title="${h(c.dispute_reason)}">Review</span>
            <button class="btn sm" data-resolve="1">Refund</button><button class="btn ghost sm" data-resolve="0">Deny</button>`
         : `<span class="pill pending" title="${h(c.dispute_reason)}">Return pending</span>`;
     }
-    if (c.dispute_status === 'approved') return '<span class="pill active">Refunded</span>';
+    if (c.dispute_status === 'approved') return sup ? `<span class="pill lost" title="${h(c.dispute_reason)}">Returned</span>` : '<span class="pill active">Refunded</span>';
     if (c.dispute_status === 'denied') return '<span class="pill lost">Return denied</span>';
     const fresh = (Date.now() - toDate(c.created_at)) / 36e5 < windowH;
     return c.price_cents > 0 && c.agent_id === state.me.id && fresh ? '<button class="btn ghost sm" data-dispute>Return</button>' : '';
@@ -701,12 +807,12 @@ async function renderCalls() {
       <button data-f="" class="${!pendingOnly ? 'on' : ''}">All calls</button>
       <button data-f="pending" class="${pendingOnly ? 'on' : ''}">Returns to review</button></div></div>` : ''}
     <div class="table-wrap"><table>
-      <thead><tr><th>When</th><th>Caller</th><th>Campaign</th>${isAdmin() ? '<th>Agent</th>' : ''}<th>Duration</th><th>Status</th><th class="num">Cost</th><th>Recording</th><th></th></tr></thead>
+      <thead><tr><th>When</th><th>Caller</th><th>Campaign</th>${isAdmin() || sup ? `<th>${sup ? 'Buyer' : 'Agent'}</th>` : ''}<th>Duration</th><th>Status</th><th class="num">${sup ? 'You earn' : 'Cost'}</th><th>Recording</th><th></th></tr></thead>
       <tbody>${calls.map((c) => `<tr data-id="${c.id}" data-lead="${c.lead_id || ''}">
         <td title="${h(when(c.created_at))}">${ago(c.created_at)}</td>
-        <td><a href="#" data-lead-open>${h(`${c.first_name || ''} ${c.last_name || ''}`.trim() || phone(c.from_number))}</a><span class="sub">${h(c.caller_state || '—')}</span></td>
+        <td>${sup ? h(c.from_number) : `<a href="#" data-lead-open>${h(`${c.first_name || ''} ${c.last_name || ''}`.trim() || phone(c.from_number))}</a>`}<span class="sub">${h(c.caller_state || '—')}</span></td>
         <td>${h(c.campaign_name || 'Main line')}${c.vertical ? `<span class="sub">${h(state.verticals[c.vertical])}</span>` : ''}</td>
-        ${isAdmin() ? `<td>${h(c.agent_name || '—')}</td>` : ''}
+        ${isAdmin() || sup ? `<td>${h(c.agent_name || '—')}</td>` : ''}
         <td>${mmss(c.duration)}${c.billable_seconds ? `<span class="sub">billable at ${mmss(c.billable_seconds)}</span>` : ''}</td>
         <td>${statusPill(c)}</td>
         <td class="num">${c.price_cents ? cents(c.price_cents) : '—'}</td>
@@ -714,11 +820,12 @@ async function renderCalls() {
         <td style="text-align:right">${disputeCell(c)}</td>
       </tr>`).join('') || `<tr><td colspan="9" class="empty">${pendingOnly ? 'No returns waiting. 🎉' : 'No calls yet. Pick campaigns in the Marketplace and go online.'}</td></tr>`}</tbody>
     </table></div>
-    <p class="muted small">Calls are billed only after they pass the campaign's billable time. Bad call? Request a return within ${windowH} hours.</p>`;
+    <p class="muted small">${sup ? 'You earn on calls that pass the billable time. If a buyer\'s return is approved, that call\'s earning is reversed.' : `Calls are billed only after they pass the campaign's billable time. Bad call? Request a return within ${windowH} hours.`}</p>`;
   v.querySelectorAll('#callSeg button').forEach((b) => (b.onclick = () => { state.callsFilter = b.dataset.f; renderCalls(); }));
   v.querySelectorAll('tr[data-id]').forEach((tr) => {
     const id = +tr.dataset.id;
-    tr.querySelector('[data-lead-open]').onclick = (e) => { e.preventDefault(); if (tr.dataset.lead) openLead(+tr.dataset.lead); };
+    const open = tr.querySelector('[data-lead-open]');
+    if (open) open.onclick = (e) => { e.preventDefault(); if (tr.dataset.lead) openLead(+tr.dataset.lead); };
     tr.querySelector('[data-dispute]')?.addEventListener('click', async () => {
       const reason = prompt('Why should this call be returned? (e.g. wrong age, already insured, hung up, language)');
       if (!reason) return;
@@ -738,9 +845,43 @@ async function renderWallet() {
   const w = await api('/api/wallet');
   state.me.balance_cents = w.balance_cents;
   renderMe();
+  const sup = isSupplier();
   const min = w.min_deposit_cents / 100;
-  const typeLabel = { deposit: '💳 Deposit', call: '📞 Call', refund: '↩️ Refund', adjustment: '✍️ Adjustment' };
+  const typeLabel = {
+    deposit: '💳 Deposit', call: '📞 Call', refund: '↩️ Refund', adjustment: '✍️ Adjustment',
+    earning: '📞 Call earned', reversal: '↩️ Returned call', payout: '💸 Payout',
+  };
   const v = $('#view');
+  const ledger = `
+    <div class="table-wrap"><table>
+      <thead><tr><th>Date</th><th>Type</th><th>Details</th><th class="num">Amount</th></tr></thead>
+      <tbody>${w.transactions.map((t) => `<tr>
+        <td>${h(when(t.created_at))}</td><td>${typeLabel[t.type] || h(t.type)}</td><td class="muted">${h(t.note)}</td>
+        <td class="num ${t.amount_cents > 0 ? 'pos' : ''}">${t.amount_cents > 0 ? '+' : ''}${cents(t.amount_cents)}</td></tr>`).join('')
+        || '<tr><td colspan="4" class="empty">No transactions yet.</td></tr>'}</tbody>
+    </table></div>`;
+
+  if (sup) {
+    v.innerHTML = `
+      <div class="grid-2">
+        <div class="card wallet-card">
+          <p class="section-label">Owed to you</p>
+          <div class="big-balance pos">${cents(w.balance_cents)}</div>
+          <p class="muted small">Earnings from billable calls, minus approved returns and payouts already sent. LeadRush pays out on your agreed schedule.</p>
+        </div>
+        <div class="card">
+          <p class="section-label">How you get paid</p>
+          <ul class="terms">
+            <li>📞 Every call that passes the billable time earns you ${100 - w.fee_pct}% of the call price.</li>
+            <li>↩️ If a buyer's return is approved, that call's earning is reversed.</li>
+            <li>💸 Payouts show up here as soon as they're sent.</li>
+          </ul>
+        </div>
+      </div>${ledger}`;
+    return;
+  }
+
+  const ar = w.auto_recharge;
   v.innerHTML = `
     <div class="grid-2">
       <div class="card wallet-card">
@@ -750,29 +891,33 @@ async function renderWallet() {
         ${w.stripe ? `
           <div class="amounts">${[100, 250, 500, 1000].filter((a) => a >= min).map((a) => `<button class="btn ghost sm" data-amt="${a}">+ $${a}</button>`).join('')}</div>
           <div class="row-inline" style="margin-top:12px">
-            <input class="input" id="customAmt" type="number" min="${min}" step="1" placeholder="Custom amount ($${min} min)">
+            <input class="input" id="customAmt" type="number" min="${min}" step="1" inputmode="decimal" placeholder="Custom amount ($${min} min)">
             <button class="btn sm" id="fund">Add funds</button>
           </div>
           <p class="error" id="wErr"></p>`
         : '<div class="banner" style="margin:12px 0 0">Card top-ups aren\'t switched on yet. Ask your admin to add funds to your wallet.</div>'}
       </div>
-      <div class="card">
-        <p class="section-label">How billing works</p>
-        <ul class="terms">
-          <li>💸 Pay per call. No subscriptions, no minimums.</li>
-          <li>⏱ A call is billed only if it lasts past the campaign's billable time.</li>
-          <li>🎯 Set daily caps and hours per campaign in the Marketplace.</li>
-          <li>↩️ Bad call? Request a return from the Calls page.</li>
-        </ul>
-      </div>
+      <form class="card" id="autoForm">
+        <div class="ar-head">
+          <p class="section-label" style="margin:0">⚡ Auto-recharge</p>
+          <label class="switch ${ar ? 'on' : ''}" id="arSwitch" role="switch" aria-checked="${ar}" tabindex="0"></label>
+        </div>
+        <p class="muted small">Never miss a call because your wallet ran dry. We'll charge your saved card automatically.</p>
+        ${w.recharge_error ? `<div class="banner bad">⚠️ Last auto-recharge failed: ${h(w.recharge_error)}. Add funds by card to update your card.</div>` : ''}
+        <div class="ar-row">
+          <span>When balance drops below</span>
+          <span class="money-in">$<input class="input" name="threshold" type="number" min="0" step="1" inputmode="decimal" value="${w.recharge_threshold_cents / 100}"></span>
+        </div>
+        <div class="ar-row">
+          <span>Add</span>
+          <span class="money-in">$<input class="input" name="amount" type="number" min="${min}" step="1" inputmode="decimal" value="${w.recharge_amount_cents / 100}"></span>
+        </div>
+        <p class="muted small" style="margin:10px 0">${w.card_label ? `Card on file: <b>${h(w.card_label)}</b>` : w.stripe ? 'Add funds by card once — that card is saved for auto-recharge.' : 'Needs card payments to be switched on.'}</p>
+        <p class="error" id="arErr"></p>
+        <button class="btn sm" ${w.card_label ? '' : 'disabled'}>Save auto-recharge</button>
+      </form>
     </div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Date</th><th>Type</th><th>Details</th><th class="num">Amount</th></tr></thead>
-      <tbody>${w.transactions.map((t) => `<tr>
-        <td>${h(when(t.created_at))}</td><td>${typeLabel[t.type] || h(t.type)}</td><td class="muted">${h(t.note)}</td>
-        <td class="num ${t.amount_cents > 0 ? 'pos' : ''}">${t.amount_cents > 0 ? '+' : ''}${cents(t.amount_cents)}</td></tr>`).join('')
-        || '<tr><td colspan="4" class="empty">No transactions yet.</td></tr>'}</tbody>
-    </table></div>`;
+    ${ledger}`;
   const checkout = async (amount) => {
     try {
       const { url } = await api('/api/wallet/checkout', { method: 'POST', body: { amount } });
@@ -781,7 +926,161 @@ async function renderWallet() {
   };
   v.querySelectorAll('[data-amt]').forEach((b) => (b.onclick = () => checkout(+b.dataset.amt)));
   if ($('#fund')) $('#fund').onclick = () => checkout(+$('#customAmt').value);
+
+  let enabled = ar;
+  const sw = $('#arSwitch');
+  const flip = () => { enabled = !enabled; sw.classList.toggle('on', enabled); sw.setAttribute('aria-checked', enabled); };
+  sw.onclick = flip;
+  sw.onkeydown = (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } };
+  $('#autoForm').onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const out = await api('/api/wallet/auto-recharge', { method: 'PUT', body: { enabled, threshold: e.target.threshold.value, amount: e.target.amount.value } });
+      toast(out.auto_recharge ? 'Auto-recharge on' : 'Auto-recharge off', out.recharge_error || '', !out.recharge_error);
+      renderWallet();
+    } catch (err) { $('#arErr').textContent = err.message; }
+  };
 }
+
+// ---------- supplier overview ----------
+async function renderSupplierOverview() {
+  const { supplier: s, daily, days } = await api(`/api/stats?days=${state.days}`);
+  const t = s.totals;
+  const v = $('#view');
+  v.innerHTML = `
+    ${state.me.status === 'pending' ? '<div class="banner">⏳ Your supplier account is waiting for approval. You can set up campaigns once you\'re approved.</div>' : ''}
+    <div class="toolbar">
+      <div class="seg" id="range">${[7, 30, 90].map((d) => `<button data-d="${d}" class="${d === days ? 'on' : ''}">${d} days</button>`).join('')}</div>
+      <div class="grow"></div>
+      ${state.me.status === 'active' ? '<a class="btn sm" href="#campaigns">+ New campaign</a>' : ''}
+    </div>
+    <div class="kpis">
+      <div class="kpi hot"><div class="label">Earned</div><div class="value">${money(t.earned_cents / 100)}</div><div class="hint">last ${days} days</div></div>
+      <div class="kpi"><div class="label">Owed to you</div><div class="value">${money(s.owed_cents / 100)}</div><div class="hint"><a href="#payouts" class="red">payout history</a></div></div>
+      <div class="kpi"><div class="label">Calls sent</div><div class="value">${t.calls}</div><div class="hint">${pct(t.connected, t.calls)} connected to a buyer</div></div>
+      <div class="kpi"><div class="label">Billable</div><div class="value">${t.billable || 0}</div><div class="hint">${pct(t.billable, t.calls)} of calls</div></div>
+      <div class="kpi"><div class="label">Avg call</div><div class="value">${mmss(Math.round(t.avg_duration || 0))}</div><div class="hint">connected calls</div></div>
+      <div class="kpi"><div class="label">Return rate</div><div class="value">${pct(t.returned, t.billable + t.returned)}</div><div class="hint">${t.returned || 0} returned</div></div>
+    </div>
+    <div class="card" style="margin-bottom:16px"><h2>Calls per day <span class="muted">last ${days} days</span></h2>${chart(daily, days, ['Calls', 'Billable'])}</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Campaign</th><th>Status</th><th class="num">Price</th><th class="num">Calls</th><th class="num">Billable</th><th class="num">Returned</th><th class="num">Earned</th></tr></thead>
+      <tbody>${s.campaigns.map((c) => `<tr>
+        <td><b>${h(c.name)}</b><span class="sub">${h(state.verticals[c.vertical])}</span></td>
+        <td>${c.status === 'pending' ? '<span class="pill pending">In review</span>' : c.status === 'paused' ? '<span class="pill lost">Paused</span>' : '<span class="pill active">Live</span>'}</td>
+        <td class="num">${cents(c.price_cents)}</td><td class="num">${c.calls}</td><td class="num">${c.billable || 0}</td>
+        <td class="num">${c.returned || 0}</td><td class="num pos">${cents(c.earned_cents)}</td></tr>`).join('')
+        || '<tr><td colspan="7" class="empty">No campaigns yet. <a href="#campaigns" class="red">Create your first one</a>.</td></tr>'}</tbody>
+    </table></div>`;
+  v.querySelectorAll('#range button').forEach((b) => (b.onclick = () => { state.days = +b.dataset.d; render(); }));
+}
+
+// ---------- suppliers (admin) ----------
+async function renderSuppliers() {
+  const { suppliers, fee_pct: fee } = await api('/api/suppliers');
+  const v = $('#view');
+  v.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr><th>Supplier</th><th>Status</th><th class="num">Live campaigns</th><th class="num">Billable (30d)</th><th class="num">Gross (30d)</th><th class="num">Their share</th><th class="num">Owed</th><th></th></tr></thead>
+      <tbody>${suppliers.map((s) => `<tr data-id="${s.id}">
+        <td><b>${h(s.company || s.name)}</b><span class="sub">${h(s.name)} · ${h(s.email)}</span></td>
+        <td>${pill(s.status)}${s.pending_campaigns ? ` <a href="#marketplace" class="pill pending">${s.pending_campaigns} to review</a>` : ''}</td>
+        <td class="num">${s.live_campaigns}</td><td class="num">${s.billable_30d}</td>
+        <td class="num">${cents(s.gross_30d)}</td><td class="num">${cents(s.earned_30d)}</td>
+        <td class="num ${s.balance_cents > 0 ? 'pos' : ''}"><b>${cents(s.balance_cents)}</b></td>
+        <td style="text-align:right">
+          ${s.status !== 'active' ? '<button class="btn sm act" data-act="approve">Approve</button>' : `<button class="btn ghost sm act" data-act="payout" ${s.balance_cents > 0 ? '' : 'disabled'}>Record payout</button>`}
+          ${s.status === 'active' ? '<button class="btn ghost sm act" data-act="disable">Disable</button>' : ''}
+        </td></tr>`).join('') || '<tr><td colspan="8" class="empty">No suppliers yet.</td></tr>'}</tbody>
+    </table></div>
+    <p class="muted small">Suppliers keep ${100 - fee}% of each billable call (change the fee in Settings). Invite suppliers with <code class="copy">${h(location.origin)}/signup?type=supplier</code></p>`;
+  bindCopy();
+  v.querySelectorAll('tr[data-id]').forEach((tr) => {
+    const s = suppliers.find((x) => x.id === +tr.dataset.id);
+    tr.querySelectorAll('.act').forEach((b) => (b.onclick = async () => {
+      try {
+        if (b.dataset.act === 'approve') await api(`/api/agents/${s.id}`, { method: 'PATCH', body: { status: 'active' } });
+        if (b.dataset.act === 'disable') {
+          if (!confirm(`Disable ${s.company || s.name}? They'll be logged out.`)) return;
+          await api(`/api/agents/${s.id}`, { method: 'PATCH', body: { status: 'disabled' } });
+        }
+        if (b.dataset.act === 'payout') {
+          const amount = prompt(`How much did you pay ${s.company || s.name}? ($)`, (s.balance_cents / 100).toFixed(2));
+          if (!amount) return;
+          const note = prompt('Reference (shows on their payouts page):', 'ACH transfer') || '';
+          await api(`/api/suppliers/${s.id}/payout`, { method: 'POST', body: { amount, note } });
+          toast('Payout recorded', `${s.company || s.name}`, true);
+        }
+        renderSuppliers();
+        refreshBadges();
+      } catch (e) { toast('Could not update', e.message); }
+    }));
+  });
+}
+
+// ---------- mobile: install + push ----------
+let installPrompt;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+function mobileCard() {
+  return `<div class="card" id="mobileCard">
+    <h2>📱 LeadRush on your phone</h2>
+    <p>${isSupplier() ? 'Install the app to check calls and earnings on the go.' : 'Install the app and turn on notifications so new leads, recharge alerts and return decisions reach you even when LeadRush is closed. Live calls always ring your mobile number.'}</p>
+    <div class="row-wrap">
+      ${isStandalone() ? '<span class="pill active">Installed</span>'
+        : `<button class="btn ghost sm" id="installBtn">⬇ Install app</button>`}
+      ${pushSupported() ? '<button class="btn ghost sm" id="pushBtn">🔔 Turn on notifications</button>' : ''}
+    </div>
+    <p class="muted small" id="installHelp" hidden>On iPhone: tap <b>Share</b> <span aria-hidden="true">⎋</span> then <b>Add to Home Screen</b>. Open LeadRush from your home screen to turn on notifications.</p>
+  </div>`;
+}
+
+async function bindMobileCard() {
+  const ib = $('#installBtn');
+  if (ib) ib.onclick = async () => {
+    if (installPrompt) { installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); } else $('#installHelp').hidden = false;
+  };
+  const pb = $('#pushBtn');
+  if (!pb) return;
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = await reg?.pushManager.getSubscription();
+  const setOn = (on) => { pb.textContent = on ? '🔕 Turn off notifications' : '🔔 Turn on notifications'; pb.dataset.on = on ? '1' : ''; };
+  setOn(!!sub && Notification.permission === 'granted');
+  pb.onclick = async () => {
+    try {
+      if (pb.dataset.on) { await disablePush(); setOn(false); return; }
+      if (isIOS() && !isStandalone()) { $('#installHelp').hidden = false; return; }
+      await enablePush();
+      setOn(true);
+      toast('Notifications on', 'You\'ll get alerts on this device.', true);
+    } catch (e) { toast('Notifications', e.message); }
+  };
+}
+
+async function enablePush() {
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Notifications are blocked. Allow them in your browser settings.');
+  const reg = await navigator.serviceWorker.ready;
+  const { key } = await api('/api/push/key');
+  const pad = '='.repeat((4 - (key.length % 4)) % 4);
+  const raw = Uint8Array.from(atob((key + pad).replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+  const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: raw });
+  await api('/api/push/subscribe', { method: 'POST', body: { subscription: sub.toJSON() } });
+}
+
+async function disablePush() {
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (sub) {
+    await api('/api/push/unsubscribe', { method: 'POST', body: { endpoint: sub.endpoint } });
+    await sub.unsubscribe();
+  }
+}
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 // ---------- realtime ----------
 function connectEvents() {
@@ -804,9 +1103,11 @@ function connectEvents() {
     refreshBadges();
   });
   es.addEventListener('wallet:update', (e) => {
-    state.me.balance_cents = JSON.parse(e.data).balance_cents;
+    const d = JSON.parse(e.data);
+    state.me.balance_cents = d.balance_cents;
     renderMe();
-    if (state.view === 'wallet') renderWallet();
+    if (d.recharge_error) toast('Auto-recharge failed', d.recharge_error);
+    if (state.view === 'wallet' || state.view === 'payouts') renderWallet();
   });
   es.addEventListener('call:update', () => { if (state.view === 'calls') renderCalls(); });
   es.addEventListener('lead:update', () => {

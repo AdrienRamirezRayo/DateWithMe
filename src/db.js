@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE COLLATE NOCASE,
   phone TEXT,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'agent',          -- admin | agent
+  role TEXT NOT NULL DEFAULT 'agent',          -- admin | agent | supplier
   status TEXT NOT NULL DEFAULT 'pending',      -- pending | active | disabled
   states TEXT NOT NULL DEFAULT '',             -- comma-separated licensed states, '' = all
   available INTEGER NOT NULL DEFAULT 0,        -- online to receive leads/calls
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   billable_seconds INTEGER NOT NULL DEFAULT 90,
   states TEXT NOT NULL DEFAULT '',             -- states the supplier generates calls from, '' = all
   description TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'active',       -- active | paused
+  status TEXT NOT NULL DEFAULT 'active',       -- pending (supplier submitted) | active | paused
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -130,6 +130,14 @@ CREATE TABLE IF NOT EXISTS transactions (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  keys TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -143,10 +151,22 @@ function addColumn(table, column, ddl) {
 }
 addColumn('users', 'balance_cents', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'timezone', "TEXT NOT NULL DEFAULT 'America/New_York'");
+addColumn('users', 'company', "TEXT NOT NULL DEFAULT ''");
+// Saved card + auto-recharge
+addColumn('users', 'stripe_customer_id', 'TEXT');
+addColumn('users', 'stripe_payment_method', 'TEXT');
+addColumn('users', 'card_label', 'TEXT');
+addColumn('users', 'auto_recharge', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'recharge_threshold_cents', 'INTEGER NOT NULL DEFAULT 5000');
+addColumn('users', 'recharge_amount_cents', 'INTEGER NOT NULL DEFAULT 20000');
+addColumn('users', 'recharge_pending_at', 'TEXT');
+addColumn('users', 'recharge_error', 'TEXT');
+addColumn('campaigns', 'supplier_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL');
 for (const [col, ddl] of [
   ['caller_state', "TEXT NOT NULL DEFAULT ''"], ['campaign_id', 'INTEGER REFERENCES campaigns(id)'],
   ['queue', "TEXT NOT NULL DEFAULT ''"], ['price_cents', 'INTEGER NOT NULL DEFAULT 0'],
   ['dispute_status', 'TEXT'], ['dispute_reason', 'TEXT'], ['ended_at', 'TEXT'],
+  ['supplier_id', 'INTEGER REFERENCES users(id) ON DELETE SET NULL'], ['supplier_cents', 'INTEGER NOT NULL DEFAULT 0'],
 ]) addColumn('calls', col, ddl);
 
 export function getSetting(key) {

@@ -203,3 +203,122 @@ test('stripe webhook credits wallet once with a valid signature', async () => {
   assert.equal((await post(sig)).status, 200);
   assert.equal((await agentTX('/api/wallet')).body.balance_cents, 35000);
 });
+
+test('supplier portal: submit campaign, admin approves, earnings, returns and payouts', async () => {
+  const sup = client();
+  assert.equal((await sup('/api/auth/signup', { method: 'POST', body: { role: 'supplier', name: 'Ad Guy', email: 'ads@x.com', password: 'password1' } })).status, 400); // needs company
+  await sup('/api/auth/signup', { method: 'POST', body: { role: 'supplier', name: 'Ad Guy', company: 'Blaze Media', email: 'ads@x.com', password: 'password1' } });
+  const me = (await sup('/api/me')).body.user;
+  assert.equal(me.role, 'supplier');
+  assert.equal((await sup('/api/campaigns', { method: 'POST', body: { name: 'Mine', vertical: 'medicare', price: 40 } })).status, 400); // pending account
+  assert.equal((await sup('/api/me', { method: 'PATCH', body: { available: true } })).status, 400);
+  assert.equal((await sup('/api/leads')).status, 403);
+
+  await admin(`/api/agents/${me.id}`, { method: 'PATCH', body: { status: 'active' } });
+  const created = await sup('/api/campaigns', { method: 'POST', body: { name: 'Blaze Medicare', vertical: 'medicare', price: 40, billable_seconds: 60, phone_number: '+15551110000', status: 'active' } });
+  const camp = created.body.campaign;
+  assert.equal(camp.status, 'pending'); // suppliers can't self-approve
+  assert.equal(camp.phone_number, null); // or pick numbers
+  assert.equal(camp.supplier, 'Blaze Media');
+
+  // agents don't see pending campaigns; supplier can still edit price while pending
+  assert.ok(!(await agentTX('/api/campaigns')).body.campaigns.some((c) => c.id === camp.id));
+  await sup(`/api/campaigns/${camp.id}`, { method: 'PATCH', body: { price: 42 } });
+  assert.equal((await admin(`/api/campaigns/${camp.id}`, { method: 'PATCH', body: { status: 'active' } })).status, 400); // needs number
+  await admin(`/api/campaigns/${camp.id}`, { method: 'PATCH', body: { status: 'active', phone_number: '+15558000099' } });
+  // once live, price is locked for the supplier but they can pause
+  await sup(`/api/campaigns/${camp.id}`, { method: 'PATCH', body: { price: 99, status: 'paused' } });
+  let mine = (await sup('/api/campaigns')).body.campaigns[0];
+  assert.equal(mine.price_cents, 4200);
+  assert.equal(mine.status, 'paused');
+  await sup(`/api/campaigns/${camp.id}`, { method: 'PATCH', body: { status: 'active' } });
+
+  // TX agent buys a call → supplier earns price minus 20% fee
+  await agentTX(`/api/campaigns/${camp.id}/subscription`, { method: 'PUT', body: { active: true, start_hour: 0, end_hour: 0, days: '0123456', daily_cap: 5 } });
+  const twiml = await form('/api/twilio/voice', { CallSid: 'SUP1', From: '+15554440001', FromState: 'TX', To: '+15558000099' });
+  const callId = twiml.match(/whisper\?call=(\d+)/)[1];
+  const agentId = twiml.match(/agent=(\d+)/)[1];
+  await form(`/api/twilio/accept?call=${callId}&agent=${agentId}`, {});
+  await form(`/api/twilio/dial-done?call=${callId}&attempt=1`, { DialCallStatus: 'completed', DialCallDuration: '75' });
+  assert.equal((await sup('/api/wallet')).body.balance_cents, 3360);
+
+  // supplier sees masked caller + their payout per call, not the buyer's full identity
+  const [call] = (await sup('/api/calls')).body.calls;
+  assert.match(call.from_number, /•••-•••-0001/);
+  assert.equal(call.price_cents, 3360);
+  assert.equal(call.agent_name, 'Tex');
+  const stats = (await sup('/api/stats')).body.supplier;
+  assert.equal(stats.totals.billable, 1);
+  assert.equal(stats.owed_cents, 3360);
+
+  // a refunded return claws back the supplier's earning
+  await agentTX(`/api/calls/${callId}/dispute`, { method: 'POST', body: { reason: 'wrong state' } });
+  await admin(`/api/calls/${callId}/resolve`, { method: 'POST', body: { approve: true } });
+  assert.equal((await sup('/api/wallet')).body.balance_cents, 0);
+
+  // admin records a payout
+  const { suppliers } = (await admin('/api/suppliers')).body;
+  assert.equal(suppliers[0].company, 'Blaze Media');
+  await admin(`/api/suppliers/${me.id}/payout`, { method: 'POST', body: { amount: 10, note: 'ACH' } });
+  const w = (await sup('/api/wallet')).body;
+  assert.equal(w.balance_cents, -1000);
+  assert.equal(w.transactions[0].type, 'payout');
+  // fee is configurable
+  assert.equal((await admin('/api/settings/fee', { method: 'PUT', body: { fee_pct: 30 } })).body.fee_pct, 30);
+  await admin('/api/settings/fee', { method: 'PUT', body: { fee_pct: 20 } });
+});
+
+test('auto-recharge charges the saved card when the balance drops below the threshold', async () => {
+  process.env.STRIPE_SECRET_KEY = 'sk_test';
+  const realFetch = globalThis.fetch;
+  const stripeCalls = [];
+  globalThis.fetch = async (url, opts) => {
+    if (!String(url).startsWith('https://api.stripe.com')) return realFetch(url, opts);
+    stripeCalls.push({ url: String(url), body: opts.body ? Object.fromEntries(new URLSearchParams(opts.body.toString())) : null });
+    if (String(url).includes('expand')) {
+      return new Response(JSON.stringify({ id: 'pi_dep', payment_method: { id: 'pm_1', card: { brand: 'visa', last4: '4242' } } }));
+    }
+    const b = Object.fromEntries(new URLSearchParams(opts.body.toString()));
+    return new Response(JSON.stringify({ id: `pi_${stripeCalls.length}`, status: 'succeeded', amount: Number(b.amount), amount_received: Number(b.amount), metadata: { user_id: b['metadata[user_id]'], kind: 'auto_recharge' } }));
+  };
+  try {
+    const tex = (await admin('/api/agents')).body.agents.find((a) => a.email === 'tex@x.com');
+    // no saved card yet
+    assert.equal((await agentTX('/api/wallet/auto-recharge', { method: 'PUT', body: { enabled: true, threshold: 50, amount: 200 } })).status, 400);
+
+    // a card deposit saves the card
+    const { createHmac } = await import('node:crypto');
+    const payload = JSON.stringify({ type: 'checkout.session.completed', data: { object: { id: 'cs_save', amount_total: 2500, payment_status: 'paid', customer: 'cus_1', payment_intent: 'pi_dep', metadata: { user_id: String(tex.id) } } } });
+    const t = Math.floor(Date.now() / 1000);
+    await realFetch(`${base}/api/stripe/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${t},v1=${createHmac('sha256', 'whsec_test').update(`${t}.${payload}`).digest('hex')}` }, body: payload });
+    let w = (await agentTX('/api/wallet')).body;
+    assert.equal(w.card_label, 'Visa •••• 4242');
+
+    // drain the wallet below $50, then enable → immediate recharge of $200
+    await admin(`/api/agents/${tex.id}/credit`, { method: 'POST', body: { amount: -(w.balance_cents / 100) + 10 } });
+    const r = await agentTX('/api/wallet/auto-recharge', { method: 'PUT', body: { enabled: true, threshold: 50, amount: 200 } });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.balance_cents, 21000);
+    const charge = stripeCalls.find((c) => c.url.endsWith('/payment_intents'));
+    assert.equal(charge.body.off_session, 'true');
+    assert.equal(charge.body.customer, 'cus_1');
+    assert.equal(charge.body.payment_method, 'pm_1');
+
+    // the payment_intent.succeeded webhook for the same charge doesn't double-credit
+    const pi = JSON.stringify({ type: 'payment_intent.succeeded', data: { object: { id: 'pi_2', amount: 20000, amount_received: 20000, metadata: { user_id: String(tex.id), kind: 'auto_recharge' } } } });
+    await realFetch(`${base}/api/stripe/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Stripe-Signature': `t=${t},v1=${createHmac('sha256', 'whsec_test').update(`${t}.${pi}`).digest('hex')}` }, body: pi });
+    w = (await agentTX('/api/wallet')).body;
+    assert.equal(w.balance_cents, 21000);
+    assert.equal(w.auto_recharge, true);
+  } finally {
+    globalThis.fetch = realFetch;
+    delete process.env.STRIPE_SECRET_KEY;
+  }
+});
+
+test('push subscriptions are saved per user', async () => {
+  const key = (await agentTX('/api/push/key')).body.key;
+  assert.ok(key.length > 40);
+  assert.equal((await agentTX('/api/push/subscribe', { method: 'POST', body: { subscription: { endpoint: 'http://bad' } } })).status, 400);
+  assert.equal((await agentTX('/api/push/subscribe', { method: 'POST', body: { subscription: { endpoint: 'https://push.example/abc', keys: { p256dh: 'x', auth: 'y' } } } })).status, 200);
+});

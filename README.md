@@ -20,6 +20,24 @@ Verticals: Final Expense, Medicare, ACA / Health, Term Life, Mortgage Protection
 - **Calls:** a call log with recordings, duration, cost, and status. Agents can request a return within 72 hours, and admins approve (which refunds the wallet) or deny.
 - **Smart routing:** a call only rings agents who are online, licensed in the caller's state, inside their hours, under their daily cap, not already on a call, and able to cover the price. Agents are rung one at a time in rotation.
 
+**Supplier portal** (`/signup?type=supplier`)
+- Suppliers (your ad guy, lead vendors) get their own login with Overview, Campaigns, Calls, and Payouts screens
+- They submit campaigns (vertical, price, billable time, description). LeadRush reviews each one, assigns a Twilio tracking number, and approves it. Pricing locks once a campaign is live; suppliers can still pause or resume it.
+- They earn their share of every billable call. The platform fee is set in **Settings** (default 20%). If a buyer's return is approved, that call's earning is reversed.
+- Supplier call logs mask caller phone numbers and show only the buyer's first name
+- Admins see what each supplier is owed on the **Suppliers** page and click **Record payout** after paying them (ACH, Zelle, etc.)
+
+**Auto-recharge**
+- The first card top-up saves the card through Stripe
+- Agents pick a threshold and an amount (for example, "when below $50, add $200"). The saved card is charged automatically after any call that drops the balance below the threshold.
+- Protected against double charges. If a card is declined, the agent gets a push notification and a text.
+
+**Mobile**
+- Installable app (PWA): agents tap **Install** on Android, or **Share → Add to Home Screen** on iPhone, and LeadRush opens full-screen like a native app
+- Push notifications for new leads, auto-recharges, failed cards, return decisions, campaign approvals, and payouts. They arrive even when the app is closed (on iPhone, the app must be installed to the home screen first).
+- Phone layout: a bottom tab bar, a big **Go live** button, and tables that turn into cards
+- Live calls always ring the agent's own mobile number, so agents can work entirely from their phone
+
 **Agent dashboard**
 - **Receiving leads** switch: only agents who are online get leads and calls
 - Live feed with a sound, a pop-up, and a browser notification when a lead arrives
@@ -56,7 +74,11 @@ npm start
 ```
 
 Open http://localhost:3000.
-- With demo data, log in as `admin@leadrush.test` / `password123`. For an agent's view, use `jasmine@leadrush.test`. `marcus@leadrush.test` has a low balance, so you can see the warnings.
+- With demo data, the password for every account is `password123`:
+  - `admin@leadrush.test` is the admin
+  - `jasmine@leadrush.test` is an agent. `marcus@leadrush.test` is an agent with a low balance, so you can see the warnings.
+  - `acme@leadrush.test` is a supplier. Senior Reach also has a campaign waiting for review.
+- To try the phone layout, open it on your phone (same Wi-Fi, `http://YOUR-COMPUTER-IP:3000`) or shrink your browser window. Installing the app and push notifications need HTTPS, so they work once it's online.
 - Without demo data, the **first account you create becomes the admin**.
 
 ## Put it online
@@ -81,7 +103,7 @@ The database is a single SQLite file at `DATABASE_PATH`. Back up that file to ba
 ## Turn on card payments (Stripe)
 
 1. In [Stripe](https://dashboard.stripe.com), copy your secret key into `STRIPE_SECRET_KEY`.
-2. Go to **Developers → Webhooks → Add endpoint** and enter `https://YOUR-DOMAIN/api/stripe/webhook` with the event `checkout.session.completed`. Copy the signing secret into `STRIPE_WEBHOOK_SECRET`.
+2. Go to **Developers → Webhooks → Add endpoint** and enter `https://YOUR-DOMAIN/api/stripe/webhook` with the events `checkout.session.completed` and `payment_intent.succeeded`. Copy the signing secret into `STRIPE_WEBHOOK_SECRET`.
 3. Agents can now top up from **Wallet**. Until Stripe is set up, admins can add funds from **Agents → ± Funds**.
 
 Optional settings: `MIN_DEPOSIT_CENTS` (default 2500, which is $25) and `DISPUTE_WINDOW_HOURS` (default 72).
@@ -104,7 +126,8 @@ src/db.js          schema
 src/auth.js        passwords, sessions
 src/leads.js       lead intake + round-robin routing
 src/campaigns.js   call campaigns + buyer eligibility (hours, caps, balance)
-src/wallet.js      wallet ledger, call billing, returns, Stripe
+src/wallet.js      wallet ledger, call billing, supplier earnings, returns, Stripe, auto-recharge
+public/sw.js       service worker: offline shell + push notifications
 src/notify.js      live dashboard events + SMS
 src/twilio.js      inbound call flow
 public/            landing, quote, login, signup, dashboard
@@ -113,8 +136,8 @@ scripts/seed.js    demo data
 
 ## Ideas for next upgrades
 
-- Supplier portal: let vendors log in, create their own campaigns, and see payouts
-- Auto-recharge: top up the wallet automatically when it drops below a set amount
+- Automatic supplier payouts through Stripe Connect
+- In-app calling: answer calls inside the app instead of on the agent's phone number
 - Bids and priority: agents pay more per call to be rung first
 - Email alerts and a mobile app (PWA) with push notifications
 - Appointment calendar plus SMS follow-up sequences

@@ -8,12 +8,14 @@ import {
 import {
   STATUSES, US_STATES, createLead, getLead, assignLead, updateStatus, normalizePhone, normalizeStates,
 } from './src/leads.js';
-import { subscribe, broadcastLead, twilioConfigured } from './src/notify.js';
+import {
+  subscribe, broadcastLead, twilioConfigured, vapidPublicKey, savePushSubscription, removePushSubscription, sendPush,
+} from './src/notify.js';
 import { twilio } from './src/twilio.js';
 import { VERTICALS, callsToday } from './src/campaigns.js';
 import {
   applyTransaction, resolveDispute, createCheckout, verifyStripeSignature, handleStripeEvent,
-  stripeConfigured, MIN_DEPOSIT_CENTS, DISPUTE_WINDOW_HOURS,
+  stripeConfigured, maybeAutoRecharge, platformFeePct, MIN_DEPOSIT_CENTS, DISPUTE_WINDOW_HOURS,
 } from './src/wallet.js';
 
 const app = express();
@@ -21,10 +23,10 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
 // Stripe needs the raw body to verify its signature, so this route comes before the JSON parser.
-app.post('/api/stripe/webhook', express.raw({ type: 'application/json', limit: '1mb' }), (req, res) => {
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json', limit: '1mb' }), async (req, res) => {
   const raw = req.body.toString('utf8');
   if (!verifyStripeSignature(raw, req.get('Stripe-Signature'))) return res.status(400).send('Bad signature');
-  handleStripeEvent(JSON.parse(raw));
+  await handleStripeEvent(JSON.parse(raw));
   res.json({ received: true });
 });
 app.use(express.json({ limit: '100kb' }));
@@ -41,6 +43,15 @@ if (ADMIN_EMAIL && ADMIN_PASSWORD && !db.prepare('SELECT 1 FROM users WHERE emai
 
 const clip = (v, n = 200) => String(v ?? '').trim().slice(0, n);
 const bad = (res, error, code = 400) => res.status(code).json({ error });
+const money = (c) => `$${(c / 100).toFixed(2)}`;
+
+// Agents and admins buy calls and work leads; suppliers only sell.
+function requireBuyer(req, res, next) {
+  requireUser(req, res, () => {
+    if (req.user.role === 'supplier') return bad(res, 'Not available on supplier accounts.', 403);
+    next();
+  });
+}
 
 // ---------- Auth ----------
 
@@ -51,12 +62,15 @@ app.post('/api/auth/signup', (req, res) => {
   if (!name || !/^\S+@\S+\.\S+$/.test(email)) return bad(res, 'Enter your name and a valid email.');
   if (password.length < 8) return bad(res, 'Password must be at least 8 characters.');
   if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) return bad(res, 'That email already has an account.');
+  const supplier = req.body.role === 'supplier';
+  const company = clip(req.body.company, 100);
+  if (supplier && !company) return bad(res, 'Enter your company name.');
 
   const first = !db.prepare('SELECT 1 FROM users LIMIT 1').get();
   const { lastInsertRowid } = db.prepare(`
-    INSERT INTO users (name, email, phone, password_hash, states, role, status) VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(name, email, normalizePhone(req.body.phone), hashPassword(password), normalizeStates(req.body.states),
-    first ? 'admin' : 'agent', first ? 'active' : 'pending');
+    INSERT INTO users (name, email, phone, password_hash, states, company, role, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, email, normalizePhone(req.body.phone), hashPassword(password), normalizeStates(req.body.states), company,
+    first ? 'admin' : supplier ? 'supplier' : 'agent', first ? 'active' : 'pending');
   createSession(res, Number(lastInsertRowid));
   res.json({ ok: true });
 });
@@ -83,24 +97,36 @@ app.get('/api/me', requireUser, (req, res) => {
 app.patch('/api/me', requireUser, (req, res) => {
   const u = req.user;
   const b = req.body;
+  if (b.available && u.role === 'supplier') return bad(res, 'Supplier accounts sell calls, they don\'t receive them.');
   if (b.available && u.status !== 'active') return bad(res, 'Your account is waiting for admin approval.');
   let timezone = u.timezone;
   if (b.timezone !== undefined) {
     try { new Intl.DateTimeFormat('en-US', { timeZone: b.timezone }); timezone = clip(b.timezone, 60); } catch { return bad(res, 'Unknown timezone.'); }
   }
-  db.prepare('UPDATE users SET name = ?, phone = ?, states = ?, available = ?, sms_alerts = ?, timezone = ? WHERE id = ?').run(
+  db.prepare('UPDATE users SET name = ?, phone = ?, states = ?, available = ?, sms_alerts = ?, timezone = ?, company = ? WHERE id = ?').run(
     b.name !== undefined ? clip(b.name, 80) || u.name : u.name,
     b.phone !== undefined ? normalizePhone(b.phone) : u.phone,
     b.states !== undefined ? normalizeStates(b.states) : u.states,
     b.available !== undefined ? (b.available ? 1 : 0) : u.available,
     b.sms_alerts !== undefined ? (b.sms_alerts ? 1 : 0) : u.sms_alerts,
     timezone,
+    b.company !== undefined ? clip(b.company, 100) || u.company : u.company,
     u.id,
   );
   res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
 });
 
 app.get('/api/events', requireUser, subscribe);
+
+app.get('/api/push/key', requireUser, (req, res) => res.json({ key: vapidPublicKey() }));
+app.post('/api/push/subscribe', requireUser, (req, res) => {
+  if (!savePushSubscription(req.user.id, req.body.subscription)) return bad(res, 'Invalid push subscription.');
+  res.json({ ok: true });
+});
+app.post('/api/push/unsubscribe', requireUser, (req, res) => {
+  removePushSubscription(req.user.id, String(req.body.endpoint || ''));
+  res.json({ ok: true });
+});
 
 // ---------- Lead intake ----------
 
@@ -155,7 +181,7 @@ function leadQuery(user, q) {
   return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', args };
 }
 
-app.get('/api/leads', requireUser, (req, res) => {
+app.get('/api/leads', requireBuyer, (req, res) => {
   const { sql, args } = leadQuery(req.user, req.query);
   const limit = Math.min(Number(req.query.limit) || 100, 500);
   const offset = Number(req.query.offset) || 0;
@@ -185,7 +211,7 @@ app.get('/api/leads.csv', requireAdmin, (req, res) => {
     .send([cols.join(','), ...rows.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\n'));
 });
 
-app.post('/api/leads', requireUser, (req, res) => {
+app.post('/api/leads', requireBuyer, (req, res) => {
   if (!req.body.phone && !req.body.email) return bad(res, 'Add a phone or email.');
   const lead = createLead(req.body, { source: 'manual', route: false });
   assignLead(lead.id, req.user.id, req.user.id);
@@ -194,7 +220,7 @@ app.post('/api/leads', requireUser, (req, res) => {
   res.json({ lead: fresh });
 });
 
-app.get('/api/leads/:id', requireUser, (req, res) => {
+app.get('/api/leads/:id', requireBuyer, (req, res) => {
   const lead = getLead(Number(req.params.id));
   if (!canSee(req.user, lead)) return bad(res, 'Lead not found.', 404);
   const activities = db.prepare(`
@@ -204,7 +230,7 @@ app.get('/api/leads/:id', requireUser, (req, res) => {
   res.json({ lead, activities });
 });
 
-app.patch('/api/leads/:id', requireUser, (req, res) => {
+app.patch('/api/leads/:id', requireBuyer, (req, res) => {
   const id = Number(req.params.id);
   const lead = getLead(id);
   if (!canSee(req.user, lead)) return bad(res, 'Lead not found.', 404);
@@ -231,7 +257,7 @@ app.patch('/api/leads/:id', requireUser, (req, res) => {
   res.json({ lead: fresh });
 });
 
-app.post('/api/leads/:id/notes', requireUser, (req, res) => {
+app.post('/api/leads/:id/notes', requireBuyer, (req, res) => {
   const lead = getLead(Number(req.params.id));
   if (!canSee(req.user, lead)) return bad(res, 'Lead not found.', 404);
   const body = clip(req.body.body, 2000);
@@ -244,6 +270,7 @@ app.post('/api/leads/:id/notes', requireUser, (req, res) => {
 
 app.get('/api/stats', requireUser, (req, res) => {
   const days = [7, 30, 90].includes(Number(req.query.days)) ? Number(req.query.days) : 30;
+  if (req.user.role === 'supplier') return res.json(supplierStats(req.user, days));
   const admin = req.user.role === 'admin';
   const scope = admin ? '1=1' : 'agent_id = ?';
   const args = admin ? [] : [req.user.id];
@@ -297,6 +324,33 @@ app.get('/api/stats', requireUser, (req, res) => {
   res.json(out);
 });
 
+function supplierStats(user, days) {
+  const since = `c.created_at >= datetime('now', '-${days} days')`;
+  const ok = "(c.dispute_status IS NULL OR c.dispute_status != 'approved')";
+  const totals = db.prepare(`
+    SELECT COUNT(*) AS calls,
+      SUM(c.agent_id IS NOT NULL) AS connected,
+      SUM(c.price_cents > 0 AND ${ok}) AS billable,
+      SUM(c.dispute_status = 'approved') AS returned,
+      COALESCE(SUM(CASE WHEN ${ok} THEN c.supplier_cents END), 0) AS earned_cents,
+      AVG(CASE WHEN c.status = 'completed' THEN c.duration END) AS avg_duration
+    FROM calls c JOIN campaigns k ON k.id = c.campaign_id WHERE k.supplier_id = ? AND ${since}
+  `).get(user.id);
+  const daily = db.prepare(`
+    SELECT date(c.created_at) AS day, COUNT(*) AS leads, SUM(c.price_cents > 0 AND ${ok}) AS sold
+    FROM calls c JOIN campaigns k ON k.id = c.campaign_id WHERE k.supplier_id = ? AND ${since} GROUP BY day ORDER BY day
+  `).all(user.id);
+  const campaigns = db.prepare(`
+    SELECT k.id, k.name, k.vertical, k.status, k.price_cents, COUNT(c.id) AS calls,
+      SUM(c.price_cents > 0 AND ${ok}) AS billable, SUM(c.dispute_status = 'approved') AS returned,
+      COALESCE(SUM(CASE WHEN ${ok} THEN c.supplier_cents END), 0) AS earned_cents
+    FROM campaigns k LEFT JOIN calls c ON c.campaign_id = k.id AND ${since}
+    WHERE k.supplier_id = ? GROUP BY k.id ORDER BY earned_cents DESC
+  `).all(user.id);
+  const { balance_cents } = db.prepare('SELECT balance_cents FROM users WHERE id = ?').get(user.id);
+  return { days, supplier: { totals, campaigns, owed_cents: balance_cents, fee_pct: platformFeePct() }, daily };
+}
+
 // ---------- Admin ----------
 
 app.get('/api/agents', requireAdmin, (req, res) => {
@@ -318,7 +372,7 @@ app.patch('/api/agents/:id', requireAdmin, (req, res) => {
   const status = ['pending', 'active', 'disabled'].includes(b.status) ? b.status : agent.status;
   db.prepare('UPDATE users SET status = ?, role = ?, states = ?, phone = ?, available = ? WHERE id = ?').run(
     status,
-    ['admin', 'agent'].includes(b.role) ? b.role : agent.role,
+    agent.role !== 'supplier' && ['admin', 'agent'].includes(b.role) ? b.role : agent.role,
     b.states !== undefined ? normalizeStates(b.states) : agent.states,
     b.phone !== undefined ? normalizePhone(b.phone) : agent.phone,
     status === 'active' ? agent.available : 0,
@@ -342,21 +396,41 @@ app.post('/api/agents/:id/credit', requireAdmin, (req, res) => {
 
 // ---------- Campaigns (pay-per-call marketplace) ----------
 
-function campaignInput(b, existing = {}) {
+// Suppliers submit campaigns for review and can only change pricing while pending;
+// admins control the tracking number, approval and everything else.
+function campaignInput(b, existing, user) {
+  const admin = user.role === 'admin';
+  const locked = !admin && existing.id && existing.status !== 'pending';
+  const pick = (key, fn, fallback) => (b[key] !== undefined && !(locked && ['name', 'vertical', 'price', 'billable_seconds'].includes(key)) ? fn(b[key]) : fallback);
   const v = {
-    name: b.name !== undefined ? clip(b.name, 100) : existing.name,
-    vertical: b.vertical !== undefined ? b.vertical : existing.vertical,
-    supplier: b.supplier !== undefined ? clip(b.supplier, 100) : existing.supplier ?? '',
-    phone_number: b.phone_number !== undefined ? normalizePhone(b.phone_number) || null : existing.phone_number ?? null,
-    price_cents: b.price !== undefined ? Math.round(Number(b.price) * 100) : existing.price_cents,
-    billable_seconds: b.billable_seconds !== undefined ? Math.max(0, Number.parseInt(b.billable_seconds, 10) || 0) : existing.billable_seconds ?? 90,
-    states: b.states !== undefined ? normalizeStates(b.states) : existing.states ?? '',
-    description: b.description !== undefined ? clip(b.description, 500) : existing.description ?? '',
-    status: ['active', 'paused'].includes(b.status) ? b.status : existing.status ?? 'active',
+    name: pick('name', (x) => clip(x, 100), existing.name),
+    vertical: pick('vertical', (x) => x, existing.vertical),
+    supplier: admin ? pick('supplier', (x) => clip(x, 100), existing.supplier ?? '') : user.company || user.name,
+    supplier_id: admin ? pick('supplier_id', (x) => (x ? Number(x) : null), existing.supplier_id ?? null) : user.id,
+    phone_number: admin ? pick('phone_number', (x) => normalizePhone(x) || null, existing.phone_number ?? null) : existing.phone_number ?? null,
+    price_cents: pick('price', (x) => Math.round(Number(x) * 100), existing.price_cents),
+    billable_seconds: pick('billable_seconds', (x) => Math.max(0, Number.parseInt(x, 10) || 0), existing.billable_seconds ?? 90),
+    states: pick('states', normalizeStates, existing.states ?? ''),
+    description: pick('description', (x) => clip(x, 500), existing.description ?? ''),
+    status: existing.status ?? (admin ? 'active' : 'pending'),
   };
+  if (admin && ['pending', 'active', 'paused'].includes(b.status)) v.status = b.status;
+  // Suppliers can pause/resume an approved campaign, but not approve their own.
+  if (!admin && existing.id && existing.status !== 'pending' && ['active', 'paused'].includes(b.status)) v.status = b.status;
+
   if (!v.name) return { error: 'Give the campaign a name.' };
   if (!VERTICALS[v.vertical]) return { error: 'Pick a vertical.' };
   if (!(v.price_cents > 0)) return { error: 'Set a price per call.' };
+  if (v.supplier_id) {
+    const s = db.prepare("SELECT company, name FROM users WHERE id = ? AND role = 'supplier'").get(v.supplier_id);
+    if (!s) return { error: 'That supplier does not exist.' };
+    if (admin && b.supplier === undefined) v.supplier = s.company || s.name;
+  } else if (admin && b.supplier_id !== undefined && b.supplier === undefined) {
+    v.supplier = '';
+  }
+  if (v.status === 'active' && !v.phone_number && admin && existing.status === 'pending') {
+    return { error: 'Assign a Twilio tracking number before approving.' };
+  }
   if (v.phone_number) {
     const clash = db.prepare('SELECT id FROM campaigns WHERE phone_number = ? AND id != ?').get(v.phone_number, existing.id ?? 0);
     if (clash) return { error: 'Another campaign already uses that phone number.' };
@@ -365,40 +439,54 @@ function campaignInput(b, existing = {}) {
 }
 
 app.get('/api/campaigns', requireUser, (req, res) => {
-  const admin = req.user.role === 'admin';
+  const { role, id: me } = req.user;
+  const where = role === 'admin' ? '' : role === 'supplier' ? 'WHERE k.supplier_id = ?' : "WHERE k.status = 'active'";
   const campaigns = db.prepare(`
     SELECT k.*, s.id AS sub_id, s.active AS sub_active, s.daily_cap, s.start_hour, s.end_hour, s.days,
       (SELECT COUNT(*) FROM subscriptions WHERE campaign_id = k.id AND active = 1) AS buyers,
-      (SELECT COUNT(*) FROM calls WHERE campaign_id = k.id AND created_at >= datetime('now', '-30 days')) AS calls_30d
+      (SELECT COUNT(*) FROM calls WHERE campaign_id = k.id AND created_at >= datetime('now', '-30 days')) AS calls_30d,
+      (SELECT COUNT(*) FROM calls WHERE campaign_id = k.id AND price_cents > 0 AND created_at >= datetime('now', '-30 days')) AS billable_30d
     FROM campaigns k LEFT JOIN subscriptions s ON s.campaign_id = k.id AND s.user_id = ?
-    ${admin ? '' : "WHERE k.status = 'active'"} ORDER BY k.status, k.vertical, k.price_cents
-  `).all(req.user.id).map((c) => ({
+    ${where} ORDER BY k.status = 'pending' DESC, k.status, k.vertical, k.price_cents
+  `).all(me, ...(role === 'supplier' ? [me] : [])).map((c) => ({
     ...c,
-    calls_today: c.sub_id ? callsToday(req.user.id, c.id, req.user.timezone) : 0,
-    ...(admin ? {} : { phone_number: undefined, buyers: undefined, calls_30d: undefined }),
+    calls_today: c.sub_id ? callsToday(me, c.id, req.user.timezone) : 0,
+    ...(role === 'agent' ? { phone_number: undefined, buyers: undefined, calls_30d: undefined, billable_30d: undefined } : {}),
   }));
-  res.json({ campaigns });
+  res.json({ campaigns, fee_pct: platformFeePct() });
 });
 
-app.post('/api/campaigns', requireAdmin, (req, res) => {
-  const { v, error } = campaignInput(req.body);
+app.post('/api/campaigns', requireUser, (req, res) => {
+  if (!['admin', 'supplier'].includes(req.user.role)) return bad(res, 'Only admins and suppliers create campaigns.', 403);
+  if (req.user.status !== 'active') return bad(res, 'Your account is waiting for admin approval.');
+  const { v, error } = campaignInput(req.body, {}, req.user);
   if (error) return bad(res, error);
   const cols = Object.keys(v);
   const { lastInsertRowid } = db.prepare(`INSERT INTO campaigns (${cols}) VALUES (${cols.map(() => '?')})`).run(...Object.values(v));
-  res.json({ campaign: db.prepare('SELECT * FROM campaigns WHERE id = ?').get(Number(lastInsertRowid)) });
+  const campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(Number(lastInsertRowid));
+  if (req.user.role === 'supplier') {
+    for (const a of db.prepare("SELECT id FROM users WHERE role = 'admin' AND status = 'active'").all()) {
+      sendPush(a.id, { title: '🆕 Campaign to review', body: `${v.supplier}: ${v.name} (${money(v.price_cents)}/call)`, url: '/dashboard#marketplace' });
+    }
+  }
+  res.json({ campaign });
 });
 
-app.patch('/api/campaigns/:id', requireAdmin, (req, res) => {
+app.patch('/api/campaigns/:id', requireUser, (req, res) => {
   const existing = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(Number(req.params.id));
-  if (!existing) return bad(res, 'Campaign not found.', 404);
-  const { v, error } = campaignInput(req.body, existing);
+  const mine = req.user.role === 'admin' || (req.user.role === 'supplier' && existing?.supplier_id === req.user.id);
+  if (!existing || !mine) return bad(res, 'Campaign not found.', 404);
+  const { v, error } = campaignInput(req.body, existing, req.user);
   if (error) return bad(res, error);
   db.prepare(`UPDATE campaigns SET ${Object.keys(v).map((k) => `${k} = ?`)} WHERE id = ?`).run(...Object.values(v), existing.id);
+  if (existing.status === 'pending' && v.status === 'active' && v.supplier_id) {
+    sendPush(v.supplier_id, { title: '✅ Campaign approved', body: `${v.name} is live in the marketplace.`, url: '/dashboard#campaigns' });
+  }
   res.json({ campaign: db.prepare('SELECT * FROM campaigns WHERE id = ?').get(existing.id) });
 });
 
 // An agent turning a campaign on/off for themselves and setting their buying filters.
-app.put('/api/campaigns/:id/subscription', requireUser, (req, res) => {
+app.put('/api/campaigns/:id/subscription', requireBuyer, (req, res) => {
   const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ? AND status = 'active'").get(Number(req.params.id));
   if (!campaign) return bad(res, 'Campaign not found.', 404);
   if (req.user.status !== 'active') return bad(res, 'Your account is waiting for admin approval.');
@@ -423,24 +511,34 @@ app.put('/api/campaigns/:id/subscription', requireUser, (req, res) => {
 
 // ---------- Calls, returns ----------
 
+const maskPhone = (p) => (p ? `•••-•••-${String(p).slice(-4)}` : '');
+
 app.get('/api/calls', requireUser, (req, res) => {
-  const admin = req.user.role === 'admin';
+  const { role } = req.user;
   const where = [];
   const args = [];
-  if (!admin || req.query.scope === 'mine') { where.push('c.agent_id = ?'); args.push(req.user.id); }
+  if (role === 'supplier') { where.push('k.supplier_id = ?'); args.push(req.user.id); }
+  else if (role !== 'admin' || req.query.scope === 'mine') { where.push('c.agent_id = ?'); args.push(req.user.id); }
   if (req.query.dispute === 'pending') where.push("c.dispute_status = 'pending'");
   if (req.query.billed === '1') where.push('c.price_cents > 0');
-  const calls = db.prepare(`
+  let calls = db.prepare(`
     SELECT c.*, k.name AS campaign_name, k.vertical, k.billable_seconds, u.name AS agent_name,
       l.first_name, l.last_name
     FROM calls c LEFT JOIN campaigns k ON k.id = c.campaign_id LEFT JOIN users u ON u.id = c.agent_id
     LEFT JOIN leads l ON l.id = c.lead_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.id DESC LIMIT 300
   `).all(...args);
+  // Suppliers see how their traffic performed, not who bought it or the caller's identity.
+  if (role === 'supplier') {
+    calls = calls.map((c) => ({
+      ...c, from_number: maskPhone(c.from_number), first_name: '', last_name: '', lead_id: null,
+      agent_name: c.agent_name ? c.agent_name.split(' ')[0] : null, price_cents: c.supplier_cents,
+    }));
+  }
   res.json({ calls, dispute_window_hours: DISPUTE_WINDOW_HOURS });
 });
 
-app.post('/api/calls/:id/dispute', requireUser, (req, res) => {
+app.post('/api/calls/:id/dispute', requireBuyer, (req, res) => {
   const call = db.prepare('SELECT * FROM calls WHERE id = ?').get(Number(req.params.id));
   if (!call || call.agent_id !== req.user.id) return bad(res, 'Call not found.', 404);
   if (!(call.price_cents > 0)) return bad(res, 'Only billed calls can be returned.');
@@ -458,20 +556,76 @@ app.post('/api/calls/:id/resolve', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
-// ---------- Wallet ----------
+// ---------- Wallet (agents) / payouts (suppliers) ----------
 
 app.get('/api/wallet', requireUser, (req, res) => {
-  const transactions = db.prepare('SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 200').all(req.user.id);
-  const { balance_cents } = db.prepare('SELECT balance_cents FROM users WHERE id = ?').get(req.user.id);
-  res.json({ balance_cents, transactions, stripe: stripeConfigured(), min_deposit_cents: MIN_DEPOSIT_CENTS });
+  const u = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const transactions = db.prepare('SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 200').all(u.id);
+  res.json({
+    balance_cents: u.balance_cents,
+    transactions,
+    stripe: stripeConfigured(),
+    min_deposit_cents: MIN_DEPOSIT_CENTS,
+    card_label: u.card_label,
+    auto_recharge: !!u.auto_recharge,
+    recharge_threshold_cents: u.recharge_threshold_cents,
+    recharge_amount_cents: u.recharge_amount_cents,
+    recharge_error: u.recharge_error,
+    fee_pct: platformFeePct(),
+  });
 });
 
-app.post('/api/wallet/checkout', requireUser, async (req, res) => {
+app.post('/api/wallet/checkout', requireBuyer, async (req, res) => {
   if (!stripeConfigured()) return bad(res, 'Card payments are not set up yet. Ask your admin to add funds.');
   const cents = Math.round(Number(req.body.amount) * 100);
   if (!(cents >= MIN_DEPOSIT_CENTS) || cents > 5000000) return bad(res, `Minimum deposit is $${MIN_DEPOSIT_CENTS / 100}.`);
   const baseUrl = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
   res.json({ url: await createCheckout({ user: req.user, amountCents: cents, baseUrl }) });
+});
+
+app.put('/api/wallet/auto-recharge', requireBuyer, async (req, res) => {
+  const u = req.user;
+  const enabled = !!req.body.enabled;
+  const threshold = req.body.threshold !== undefined ? Math.round(Number(req.body.threshold) * 100) : u.recharge_threshold_cents;
+  const amount = req.body.amount !== undefined ? Math.round(Number(req.body.amount) * 100) : u.recharge_amount_cents;
+  if (enabled && !u.stripe_payment_method) return bad(res, 'Add funds by card once first — that card is used for auto-recharge.');
+  if (!(threshold >= 0) || threshold > 1000000) return bad(res, 'Enter the balance that should trigger a recharge.');
+  if (!(amount >= MIN_DEPOSIT_CENTS) || amount > 5000000) return bad(res, `Recharge amount must be at least $${MIN_DEPOSIT_CENTS / 100}.`);
+  db.prepare('UPDATE users SET auto_recharge = ?, recharge_threshold_cents = ?, recharge_amount_cents = ?, recharge_error = NULL WHERE id = ?')
+    .run(enabled ? 1 : 0, threshold, amount, u.id);
+  if (enabled) await maybeAutoRecharge(u.id);
+  const fresh = db.prepare('SELECT * FROM users WHERE id = ?').get(u.id);
+  res.json({ auto_recharge: !!fresh.auto_recharge, balance_cents: fresh.balance_cents, recharge_error: fresh.recharge_error });
+});
+
+// ---------- Suppliers (admin) ----------
+
+app.get('/api/suppliers', requireAdmin, (req, res) => {
+  const suppliers = db.prepare(`
+    SELECT u.*,
+      (SELECT COUNT(*) FROM campaigns WHERE supplier_id = u.id AND status = 'active') AS live_campaigns,
+      (SELECT COUNT(*) FROM campaigns WHERE supplier_id = u.id AND status = 'pending') AS pending_campaigns,
+      (SELECT COUNT(*) FROM calls WHERE supplier_id = u.id AND created_at >= datetime('now', '-30 days')) AS billable_30d,
+      (SELECT COALESCE(SUM(supplier_cents), 0) FROM calls WHERE supplier_id = u.id AND created_at >= datetime('now', '-30 days')
+        AND (dispute_status IS NULL OR dispute_status != 'approved')) AS earned_30d,
+      (SELECT COALESCE(SUM(price_cents), 0) FROM calls WHERE supplier_id = u.id AND created_at >= datetime('now', '-30 days')
+        AND (dispute_status IS NULL OR dispute_status != 'approved')) AS gross_30d
+    FROM users u WHERE u.role = 'supplier' ORDER BY u.status = 'pending' DESC, u.balance_cents DESC
+  `).all().map((s) => ({ ...publicUser(s), ...Object.fromEntries(['live_campaigns', 'pending_campaigns', 'billable_30d', 'earned_30d', 'gross_30d'].map((k) => [k, s[k]])) }));
+  res.json({ suppliers, fee_pct: platformFeePct() });
+});
+
+app.post('/api/suppliers/:id/payout', requireAdmin, (req, res) => {
+  const s = db.prepare("SELECT * FROM users WHERE id = ? AND role = 'supplier'").get(Number(req.params.id));
+  if (!s) return bad(res, 'Supplier not found.', 404);
+  const cents = Math.round(Number(req.body.amount) * 100);
+  if (!(cents > 0)) return bad(res, 'Enter the amount you paid.');
+  applyTransaction({
+    userId: s.id, amountCents: -cents, type: 'payout', allowNegative: true,
+    note: clip(req.body.note, 200) || 'Payout sent',
+  });
+  sendPush(s.id, { title: '💸 Payout sent', body: `${money(cents)} is on its way.`, url: '/dashboard#payouts' });
+  res.json({ balance_cents: db.prepare('SELECT balance_cents FROM users WHERE id = ?').get(s.id).balance_cents });
 });
 
 app.get('/api/settings', requireAdmin, (req, res) => {
@@ -482,7 +636,15 @@ app.get('/api/settings', requireAdmin, (req, res) => {
     twilio: twilioConfigured(),
     twilio_number: process.env.TWILIO_PHONE_NUMBER || null,
     stripe: stripeConfigured(),
+    fee_pct: platformFeePct(),
   });
+});
+
+app.put('/api/settings/fee', requireAdmin, (req, res) => {
+  const pct = Number(req.body.fee_pct);
+  if (!(pct >= 0 && pct <= 100)) return bad(res, 'Fee must be between 0 and 100%.');
+  setSetting('platform_fee_pct', String(pct));
+  res.json({ fee_pct: platformFeePct() });
 });
 
 app.post('/api/settings/rotate-key', requireAdmin, (req, res) => {

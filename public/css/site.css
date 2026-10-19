@@ -114,6 +114,12 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.25; }
 .wins-cta { text-align: center; }
 .marker { font: 40px/1.15 'Permanent Marker', cursive; color: #fff !important; transform: rotate(-8deg); margin: 0 0 40px; }
 
+/* SUPPLIERS */
+.suppliers { padding: 80px 0; background: linear-gradient(90deg, #14070c, #0b0910); border-top: 1px solid var(--line); }
+.suppliers-inner { display: flex; align-items: center; justify-content: space-between; gap: 40px; flex-wrap: wrap; }
+.suppliers-inner > div { max-width: 640px; }
+.suppliers p:not(.eyebrow) { color: #d4d4de; }
+
 /* FOOTER */
 .footer { background: #050508; border-top: 1px solid var(--line); padding: 28px 0; }
 .footer-inner { display: flex; align-items: center; gap: 40px; flex-wrap: wrap; }

@@ -1,5 +1,5 @@
 import { db, logActivity } from './db.js';
-import { broadcastLead, sendSms } from './notify.js';
+import { broadcastLead, sendSms, sendPush } from './notify.js';
 
 export const STATUSES = ['new', 'contacted', 'appointment', 'sold', 'lost'];
 
@@ -34,7 +34,7 @@ export function getLead(id) {
 // Online, approved agents licensed in the lead's state, longest-waiting first.
 export function eligibleAgents(state) {
   const agents = db.prepare(`
-    SELECT * FROM users WHERE status = 'active' AND available = 1
+    SELECT * FROM users WHERE status = 'active' AND available = 1 AND role != 'supplier'
     ORDER BY last_assigned_at IS NOT NULL, last_assigned_at ASC, id ASC
   `).all();
   return agents.filter((a) => !a.states || !state || a.states.split(',').includes(state));
@@ -55,10 +55,14 @@ export function routeLead(leadId) {
   const [agent] = eligibleAgents(lead.state);
   if (agent) {
     assignLead(leadId, agent.id);
-    if (agent.sms_alerts) {
-      const name = `${lead.first_name} ${lead.last_name}`.trim() || 'New lead';
-      sendSms(agent.phone, `⚡ LeadRush: ${name} (${lead.state || '—'}) ${lead.phone}. Call now!`);
-    }
+    const name = `${lead.first_name} ${lead.last_name}`.trim() || 'New lead';
+    if (agent.sms_alerts) sendSms(agent.phone, `⚡ LeadRush: ${name} (${lead.state || '—'}) ${lead.phone}. Call now!`);
+    sendPush(agent.id, {
+      title: '⚡ New lead for you',
+      body: `${name} · ${lead.state || '—'} · ${lead.coverage_type || lead.source}. Call now!`,
+      url: `/dashboard#lead-${leadId}`,
+      tag: `lead-${leadId}`,
+    });
   }
   const fresh = getLead(leadId);
   broadcastLead('lead:new', fresh);

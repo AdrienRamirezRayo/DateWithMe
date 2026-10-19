@@ -2,9 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Dashboard — LeadRush</title>
   <link rel="icon" href="/img/icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/img/icon-192.png">
+  <meta name="theme-color" content="#07070c">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="LeadRush">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/app.css">
@@ -13,14 +20,7 @@
   <div class="app">
     <aside class="side" id="side">
       <a href="/" class="logo"><img src="/img/logo.png" alt="LeadRush"></a>
-      <a href="#overview" class="nav-item" data-view="overview">📊 Overview</a>
-      <a href="#marketplace" class="nav-item" data-view="marketplace">🛒 Marketplace</a>
-      <a href="#calls" class="nav-item" data-view="calls">📞 Calls <span class="count" id="disputeCount" hidden></span></a>
-      <a href="#leads" class="nav-item" data-view="leads">⚡ Leads <span class="count" id="newCount" hidden></span></a>
-      <a href="#wallet" class="nav-item" data-view="wallet">💳 Wallet</a>
-      <a href="#agents" class="nav-item admin-only" data-view="agents" hidden>👥 Agents <span class="count" id="pendingCount" hidden></span></a>
-      <a href="#sources" class="nav-item admin-only" data-view="sources" hidden>🎯 Ad Sources</a>
-      <a href="#settings" class="nav-item" data-view="settings">⚙️ Settings</a>
+      <nav id="nav"></nav>
       <div class="spacer"></div>
       <div class="me"><b id="meName"></b><br><span class="muted" id="meRole"></span> · <button id="logout">Log out</button></div>
     </aside>
@@ -40,6 +40,7 @@
     </div>
   </div>
 
+  <nav class="tabbar" id="tabbar" aria-label="Main"></nav>
   <div class="scrim" id="scrim"></div>
   <aside class="drawer" id="drawer"></aside>
   <div class="toasts" id="toasts"></div>
