@@ -1,31 +1,9 @@
-// LeadRush service worker: offline app shell + push notifications.
-const CACHE = 'leadrush-v1';
-const SHELL = ['/dashboard', '/login', '/css/base.css', '/css/app.css', '/js/dashboard.js', '/js/auth.js', '/img/logo.png', '/img/icon-192.png'];
-
-self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
-});
-
+// LeadRush service worker — only used to show browser notifications (new leads, wallet alerts).
+// No offline caching and no app install.
+self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
-});
-
-// Network first so data is always fresh; fall back to the cached shell when offline.
-// API calls are never cached.
-self.addEventListener('fetch', (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/')) return;
-  e.respondWith(
-    fetch(e.request)
-      .then((res) => {
-        if (res.ok && !res.redirected && SHELL.includes(url.pathname)) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
-        }
-        return res;
-      })
-      .catch(() => caches.match(e.request).then((hit) => hit || caches.match('/dashboard'))),
-  );
+  // Clear any cache left by the earlier offline version.
+  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 
 self.addEventListener('push', (e) => {
@@ -34,10 +12,8 @@ self.addEventListener('push', (e) => {
   e.waitUntil(self.registration.showNotification(data.title || 'LeadRush', {
     body: data.body,
     icon: '/img/icon-192.png',
-    badge: '/img/icon-192.png',
     tag: data.tag,
     renotify: !!data.tag,
-    vibrate: [200, 100, 200],
     data: { url: data.url || '/dashboard' },
   }));
 });

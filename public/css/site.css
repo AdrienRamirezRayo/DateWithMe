@@ -129,6 +129,12 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.25; }
 
 /* RESPONSIVE */
 @media (max-width: 1000px) {
+  .nav-links { display: none; position: absolute; top: 76px; left: 24px; right: 24px; flex-direction: column; gap: 4px; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+  .nav-links.open { display: flex; }
+  .nav-links a.active::after { display: none; }
+  .nav-login { display: block; }
+  .nav-toggle { display: block; }
+  .nav-cta { display: none; }
   .hero-grid, .how-grid, .wins-grid { grid-template-columns: 1fr; }
   .hero-art { height: 420px; }
   .features { grid-template-columns: repeat(2, 1fr); row-gap: 30px; }
@@ -139,12 +145,7 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.25; }
 }
 @media (max-width: 760px) {
   .wrap { padding: 0 16px; }
-  .nav-links { display: none; position: absolute; top: 76px; left: 16px; right: 16px; flex-direction: column; gap: 4px; padding: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
-  .nav-links.open { display: flex; }
-  .nav-links a.active::after { display: none; }
-  .nav-login { display: block; }
-  .nav-toggle { display: block; }
-  .nav-cta { display: none; }
+  .nav-links { left: 16px; right: 16px; }
   .hero { padding-top: 110px; }
   .hero-art { height: 360px; }
   .orb { width: 160px; height: 160px; left: 8%; }

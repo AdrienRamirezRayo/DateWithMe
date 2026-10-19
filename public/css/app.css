@@ -96,7 +96,7 @@ td .sub { display: block; color: var(--muted); font-size: 12px; }
 .empty { padding: 40px; text-align: center; color: var(--muted); }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 
-.pill { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
+.pill { white-space: nowrap; display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: capitalize; }
 .pill.new { background: rgba(255, 45, 85, 0.15); color: #ff7590; }
 .pill.contacted { background: rgba(59, 130, 246, 0.15); color: #7fb0ff; }
 .pill.appointment { background: rgba(245, 165, 36, 0.15); color: #ffc463; }
@@ -217,6 +217,7 @@ td.pos { color: #5fe08f; }
 .tabbar { display: none; }
 
 @media (max-width: 1100px) { .grid-2 { grid-template-columns: 1fr; } }
+@media (max-width: 360px) { .facts { grid-template-columns: 1fr; } }
 @media (max-width: 860px) {
   .app { grid-template-columns: 1fr; }
   .side { position: fixed; z-index: 45; left: 0; width: 250px; transform: translateX(-100%); transition: transform 0.25s; }
@@ -230,7 +231,7 @@ td.pos { color: #5fe08f; }
   .avail .label-text { display: none; }
   .balance { padding: 6px 10px; font-size: 13px; }
   .view { padding: 18px 16px 60px; }
-  .facts, .form-grid { grid-template-columns: 1fr; }
+  .form-grid { grid-template-columns: 1fr; }
   .pipeline { grid-template-columns: repeat(3, 1fr); }
 }
 
@@ -259,8 +260,21 @@ td.pos { color: #5fe08f; }
   .grid-2 { gap: 12px; }
 }
 
-/* Tables become stacked cards on phones */
-@media (max-width: 700px) {
+/* Mid-size screens (iPad landscape, small laptops): slimmer sidebar and tighter tables so everything fits */
+@media (min-width: 861px) and (max-width: 1280px) {
+  .app { grid-template-columns: 210px 1fr; }
+  .view { padding: 22px 20px 60px; }
+  .topbar { padding: 14px 20px; }
+}
+@media (max-width: 1500px) {
+  th { padding: 11px 10px; white-space: normal; }
+  td { padding: 11px 10px; white-space: normal; }
+  td audio { width: 150px; }
+  td .btn.sm { padding: 5px 10px; }
+}
+
+/* Wide tables become stacked cards on phones and tablets (two per row on tablets) */
+@media (max-width: 1100px) {
   .table-wrap { background: none; border: 0; overflow: visible; }
   .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display: block; width: 100%; }
   .table-wrap thead { display: none; }
@@ -279,4 +293,10 @@ td.pos { color: #5fe08f; }
   .table-wrap td audio { width: 100%; max-width: 220px; }
   .table-wrap td[style*="text-align:right"] { justify-content: flex-end; flex-wrap: wrap; }
   .table-wrap .input.states { width: 140px !important; }
+}
+
+@media (min-width: 701px) and (max-width: 1100px) {
+  .table-wrap tbody { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .table-wrap tr { margin-bottom: 0; }
+  .table-wrap tr:has(td.empty) { grid-column: 1 / -1; }
 }

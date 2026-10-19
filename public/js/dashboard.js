@@ -124,7 +124,7 @@ async function toggleAvail() {
     state.me = user;
     renderMe();
     // First time going live: offer phone/desktop notifications for new leads.
-    if (user.available && pushSupported() && Notification.permission === 'default' && !(isIOS() && !isStandalone())) enablePush().catch(() => {});
+    if (user.available && pushSupported() && Notification.permission === 'default') enablePush().catch(() => {});
   } catch (e) { toast('Heads up', e.message); }
 }
 $('#avail').onclick = () => toggleAvail().then(() => { if (state.view === 'overview') render(); });
@@ -1018,31 +1018,20 @@ async function renderSuppliers() {
   });
 }
 
-// ---------- mobile: install + push ----------
-let installPrompt;
-window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
-const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
+// ---------- browser notifications ----------
 const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 
 function mobileCard() {
+  if (isSupplier()) return '';
   return `<div class="card" id="mobileCard">
-    <h2>📱 LeadRush on your phone</h2>
-    <p>${isSupplier() ? 'Install the app to check calls and earnings on the go.' : 'Install the app and turn on notifications so new leads, recharge alerts and return decisions reach you even when LeadRush is closed. Live calls always ring your mobile number.'}</p>
-    <div class="row-wrap">
-      ${isStandalone() ? '<span class="pill active">Installed</span>'
-        : `<button class="btn ghost sm" id="installBtn">⬇ Install app</button>`}
-      ${pushSupported() ? '<button class="btn ghost sm" id="pushBtn">🔔 Turn on notifications</button>' : ''}
-    </div>
-    <p class="muted small" id="installHelp" hidden>On iPhone: tap <b>Share</b> <span aria-hidden="true">⎋</span> then <b>Add to Home Screen</b>. Open LeadRush from your home screen to turn on notifications.</p>
+    <h2>🔔 Notifications</h2>
+    <p>Get an alert on this device when a new lead comes in, your wallet is recharged or low, or a return is decided — even when LeadRush isn't the open tab. Live calls always ring your mobile number.</p>
+    ${pushSupported() ? '<button class="btn ghost sm" id="pushBtn">🔔 Turn on notifications</button>'
+      : '<p class="muted small">This browser doesn\'t support notifications. You\'ll still get text alerts and in-app alerts.</p>'}
   </div>`;
 }
 
 async function bindMobileCard() {
-  const ib = $('#installBtn');
-  if (ib) ib.onclick = async () => {
-    if (installPrompt) { installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; render(); } else $('#installHelp').hidden = false;
-  };
   const pb = $('#pushBtn');
   if (!pb) return;
   const reg = await navigator.serviceWorker.getRegistration();
@@ -1052,7 +1041,6 @@ async function bindMobileCard() {
   pb.onclick = async () => {
     try {
       if (pb.dataset.on) { await disablePush(); setOn(false); return; }
-      if (isIOS() && !isStandalone()) { $('#installHelp').hidden = false; return; }
       await enablePush();
       setOn(true);
       toast('Notifications on', 'You\'ll get alerts on this device.', true);

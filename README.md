@@ -32,10 +32,10 @@ Verticals: Final Expense, Medicare, ACA / Health, Term Life, Mortgage Protection
 - Agents pick a threshold and an amount (for example, "when below $50, add $200"). The saved card is charged automatically after any call that drops the balance below the threshold.
 - Protected against double charges. If a card is declined, the agent gets a push notification and a text.
 
-**Mobile**
-- Installable app (PWA): agents tap **Install** on Android, or **Share → Add to Home Screen** on iPhone, and LeadRush opens full-screen like a native app
-- Push notifications for new leads, auto-recharges, failed cards, return decisions, campaign approvals, and payouts. They arrive even when the app is closed (on iPhone, the app must be installed to the home screen first).
-- Phone layout: a bottom tab bar, a big **Go live** button, and tables that turn into cards
+**Works on every screen**
+- One website that adjusts to phones, iPads and tablets (portrait and landscape), laptops, and large monitors. There's nothing to install.
+- Phones and tablets get a bottom tab bar, a big **Go live** button, and tables that turn into cards (two per row on tablets). iPad landscape and laptops keep the sidebar with tighter tables.
+- Optional browser notifications for new leads, auto-recharges, failed cards, return decisions, campaign approvals, and payouts, in browsers that support them (Chrome, Edge, Firefox, Android, desktop Safari)
 - Live calls always ring the agent's own mobile number, so agents can work entirely from their phone
 
 **Agent dashboard**
@@ -78,7 +78,7 @@ Open http://localhost:3000.
   - `admin@leadrush.test` is the admin
   - `jasmine@leadrush.test` is an agent. `marcus@leadrush.test` is an agent with a low balance, so you can see the warnings.
   - `acme@leadrush.test` is a supplier. Senior Reach also has a campaign waiting for review.
-- To try the phone layout, open it on your phone (same Wi-Fi, `http://YOUR-COMPUTER-IP:3000`) or shrink your browser window. Installing the app and push notifications need HTTPS, so they work once it's online.
+- To try other screen sizes, open it on your phone or iPad (same Wi-Fi, `http://YOUR-COMPUTER-IP:3000`) or resize your browser window. Browser notifications need HTTPS, so they work once the site is online.
 - Without demo data, the **first account you create becomes the admin**.
 
 ## Put it online
@@ -127,7 +127,7 @@ src/auth.js        passwords, sessions
 src/leads.js       lead intake + round-robin routing
 src/campaigns.js   call campaigns + buyer eligibility (hours, caps, balance)
 src/wallet.js      wallet ledger, call billing, supplier earnings, returns, Stripe, auto-recharge
-public/sw.js       service worker: offline shell + push notifications
+public/sw.js       shows browser notifications (no offline mode, no install)
 src/notify.js      live dashboard events + SMS
 src/twilio.js      inbound call flow
 public/            landing, quote, login, signup, dashboard
