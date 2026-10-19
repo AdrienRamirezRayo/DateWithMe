@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Free Life Insurance Quotes — LeadRush</title>
+  <meta name="description" content="Compare life insurance options in 60 seconds. Talk to a licensed agent today.">
+  <link rel="icon" href="/img/icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/base.css">
+  <style>
+    body { min-height: 100vh; background: radial-gradient(ellipse 80% 50% at 50% 0%, rgba(255, 45, 85, 0.22), transparent 60%), var(--ink); }
+    .top { display: flex; justify-content: center; padding: 22px 16px; }
+    .card { max-width: 560px; margin: 10px auto 40px; padding: 0 16px; }
+    h1 { font: 900 clamp(30px, 6vw, 42px)/1.05 var(--display); letter-spacing: -0.02em; text-align: center; margin: 0 0 10px; }
+    .sub { text-align: center; color: var(--muted); margin: 0 0 26px; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; padding: 28px; box-shadow: 0 30px 80px -40px var(--red-glow); }
+    .progress { height: 6px; border-radius: 6px; background: var(--ink-2); overflow: hidden; margin-bottom: 24px; }
+    .progress div { height: 100%; width: 25%; background: linear-gradient(90deg, #ff6b88, var(--red)); transition: width 0.3s ease; }
+    .step { display: none; }
+    .step.on { display: block; animation: in 0.25s ease; }
+    @keyframes in { from { opacity: 0; transform: translateY(6px); } }
+    .q { font-size: 20px; font-weight: 700; margin: 0 0 18px; }
+    .choices { display: grid; gap: 10px; }
+    .choice { text-align: left; padding: 16px 18px; border-radius: 12px; background: var(--ink-2); border: 1px solid var(--line); cursor: pointer; font-weight: 600; transition: border-color 0.15s, background 0.15s; }
+    .choice:hover { border-color: var(--red); background: #1a0e14; }
+    .choice small { display: block; font-weight: 400; color: var(--muted); }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .stack { display: grid; gap: 14px; }
+    .consent { display: flex; gap: 10px; font-size: 12px; color: var(--muted); line-height: 1.5; margin: 6px 0; }
+    .consent input { margin-top: 3px; accent-color: var(--red); flex: none; }
+    .nav-row { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; }
+    .back { background: none; border: 0; color: var(--muted); cursor: pointer; padding: 8px 0; }
+    .back[hidden] { visibility: hidden; display: block; }
+    .done { text-align: center; padding: 20px 0; }
+    .done .check { width: 76px; height: 76px; margin: 0 auto 18px; border-radius: 50%; display: grid; place-items: center; font-size: 36px; background: rgba(34, 197, 94, 0.15); color: var(--green); }
+    .points { display: flex; justify-content: center; gap: 22px; flex-wrap: wrap; margin-top: 22px; color: var(--muted); font-size: 13px; }
+    .hp { position: absolute; left: -9999px; }
+    footer { text-align: center; color: #6d6d80; font-size: 12px; padding: 0 16px 30px; }
+    @media (max-width: 480px) { .panel { padding: 22px 18px; } .row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="top"><span class="logo"><img src="/img/logo.png" alt="LeadRush"></span></div>
+
+  <div class="card">
+    <h1>Protect Your Family <span class="red">Today</span></h1>
+    <p class="sub">Answer 4 quick questions and a licensed agent will call you with your options. Free, no obligation.</p>
+
+    <form class="panel" id="quote" novalidate>
+      <div class="progress"><div id="bar"></div></div>
+
+      <div class="step on" data-step="1">
+        <p class="q">What kind of coverage are you looking for?</p>
+        <div class="choices" data-name="coverage_type">
+          <button type="button" class="choice" data-value="Term Life">Term Life<small>Affordable coverage for 10–30 years</small></button>
+          <button type="button" class="choice" data-value="Whole Life">Whole Life<small>Lifetime coverage that builds cash value</small></button>
+          <button type="button" class="choice" data-value="Final Expense">Final Expense<small>Covers funeral &amp; end-of-life costs</small></button>
+          <button type="button" class="choice" data-value="Mortgage Protection">Mortgage Protection<small>Keep your family in the home</small></button>
+          <button type="button" class="choice" data-value="Not Sure">Not sure yet<small>An agent will help you decide</small></button>
+        </div>
+      </div>
+
+      <div class="step" data-step="2">
+        <p class="q">How much coverage do you need?</p>
+        <div class="choices" data-name="coverage_amount">
+          <button type="button" class="choice" data-value="Under $25k">Under $25,000</button>
+          <button type="button" class="choice" data-value="$25k–$100k">$25,000 – $100,000</button>
+          <button type="button" class="choice" data-value="$100k–$250k">$100,000 – $250,000</button>
+          <button type="button" class="choice" data-value="$250k–$500k">$250,000 – $500,000</button>
+          <button type="button" class="choice" data-value="$500k+">$500,000+</button>
+        </div>
+      </div>
+
+      <div class="step" data-step="3">
+        <p class="q">A little about you</p>
+        <div class="stack">
+          <div class="row">
+            <div class="field"><label for="age">Age</label><input class="input" id="age" name="age" type="number" min="18" max="99" inputmode="numeric" required></div>
+            <div class="field"><label for="state">State</label><select class="input" id="state" name="state" required><option value="">Select…</option></select></div>
+          </div>
+          <div class="field"><label for="zip">ZIP code</label><input class="input" id="zip" name="zip" inputmode="numeric" maxlength="5" autocomplete="postal-code"></div>
+          <div class="field"><label for="best_time">Best time to call</label>
+            <select class="input" id="best_time" name="best_time"><option>Anytime</option><option>Morning</option><option>Afternoon</option><option>Evening</option></select>
+          </div>
+        </div>
+      </div>
+
+      <div class="step" data-step="4">
+        <p class="q">Where should your agent reach you?</p>
+        <div class="stack">
+          <div class="row">
+            <div class="field"><label for="first_name">First name</label><input class="input" id="first_name" name="first_name" autocomplete="given-name" required></div>
+            <div class="field"><label for="last_name">Last name</label><input class="input" id="last_name" name="last_name" autocomplete="family-name"></div>
+          </div>
+          <div class="field"><label for="phone">Phone</label><input class="input" id="phone" name="phone" type="tel" autocomplete="tel" placeholder="(555) 555-5555" required></div>
+          <div class="field"><label for="email">Email</label><input class="input" id="email" name="email" type="email" autocomplete="email"></div>
+          <input class="hp" name="company" tabindex="-1" autocomplete="off" aria-hidden="true">
+          <label class="consent"><input type="checkbox" id="consent" required>
+            <span id="consentText">By checking this box and clicking "Get My Quote", I agree to be contacted by LeadRush and its licensed insurance agent partners about life insurance at the phone number provided, including by calls and text messages that may use automated technology or prerecorded voices. Consent is not a condition of purchase. Message and data rates may apply. Reply STOP to opt out.</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="done step" data-step="5">
+        <div class="check">✓</div>
+        <p class="q">You're all set, <span id="doneName"></span>!</p>
+        <p class="sub" style="margin:0">A licensed agent will call you shortly. Keep your phone nearby.</p>
+      </div>
+
+      <p class="error" id="err"></p>
+      <div class="nav-row" id="navRow">
+        <button type="button" class="back" id="back" hidden>← Back</button>
+        <button type="submit" class="btn" id="next" hidden>Continue <span class="arrow">→</span></button>
+      </div>
+    </form>
+
+    <div class="points"><span>🔒 Secure &amp; private</span><span>⚡ Fast callback</span><span>✅ Licensed agents</span></div>
+  </div>
+
+  <footer>© LeadRush. This is not an insurance company. Coverage options and rates depend on carrier underwriting.</footer>
+
+<script>
+const STATES = 'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' ');
+const form = document.getElementById('quote');
+const stateSel = document.getElementById('state');
+STATES.forEach((s) => stateSel.add(new Option(s, s)));
+
+const data = {};
+const params = new URLSearchParams(location.search);
+for (const k of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content']) if (params.get(k)) data[k] = params.get(k);
+
+let step = 1;
+const $ = (id) => document.getElementById(id);
+function show(n) {
+  step = n;
+  form.querySelectorAll('.step').forEach((el) => el.classList.toggle('on', +el.dataset.step === n));
+  $('bar').style.width = `${Math.min(n, 4) * 25}%`;
+  $('back').hidden = n === 1 || n === 5;
+  $('next').hidden = n < 3 || n === 5;
+  $('next').innerHTML = n === 4 ? 'Get My Quote <span class="arrow">→</span>' : 'Continue <span class="arrow">→</span>';
+  $('err').textContent = '';
+  if (n === 5) $('navRow').hidden = true;
+}
+
+form.querySelectorAll('.choices').forEach((group) => {
+  group.addEventListener('click', (e) => {
+    const btn = e.target.closest('.choice');
+    if (!btn) return;
+    data[group.dataset.name] = btn.dataset.value;
+    show(step + 1);
+  });
+});
+$('back').onclick = () => show(step - 1);
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const v = Object.fromEntries(new FormData(form));
+  if (step === 3) {
+    if (!(+v.age >= 18 && +v.age <= 99)) return ($('err').textContent = 'Please enter your age (18–99).');
+    if (!v.state) return ($('err').textContent = 'Please pick your state.');
+    return show(4);
+  }
+  if (!v.first_name.trim()) return ($('err').textContent = 'Please enter your first name.');
+  if (v.phone.replace(/\D/g, '').length < 10) return ($('err').textContent = 'Please enter a valid 10-digit phone number.');
+  if (!$('consent').checked) return ($('err').textContent = 'Please check the box so an agent can contact you.');
+
+  $('next').disabled = true;
+  try {
+    const res = await fetch('/api/leads/public', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...data, ...v, consent_text: $('consentText').textContent }),
+    });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error);
+    $('doneName').textContent = v.first_name.trim();
+    show(5);
+    window.fbq?.('track', 'Lead');
+    window.gtag?.('event', 'generate_lead');
+  } catch (err) {
+    $('err').textContent = err.message || 'Something went wrong. Please try again.';
+  } finally {
+    $('next').disabled = false;
+  }
+});
+
+$('phone').addEventListener('input', (e) => {
+  const d = e.target.value.replace(/\D/g, '').replace(/^1(?=\d{10})/, '').slice(0, 10);
+  e.target.value = d.length > 6 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : d.length > 3 ? `(${d.slice(0, 3)}) ${d.slice(3)}` : d;
+});
+show(1);
+</script>
+</body>
+</html>

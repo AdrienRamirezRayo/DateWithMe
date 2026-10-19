@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Login — LeadRush</title>
+  <link rel="icon" href="/img/icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="auth">
+  <form class="auth-card" id="form">
+    <a href="/" class="logo"><img src="/img/logo.png" alt="LeadRush"></a>
+    <h1>Welcome back</h1>
+    <p class="muted">Log in to see your leads.</p>
+    <div class="field"><label for="email">Email</label><input class="input" id="email" name="email" type="email" autocomplete="email" required></div>
+    <div class="field"><label for="password">Password</label><input class="input" id="password" name="password" type="password" autocomplete="current-password" required></div>
+    <p class="error" id="err"></p>
+    <button class="btn" type="submit">Log In <span class="arrow">→</span></button>
+    <p class="muted small">New agent? <a href="/signup">Create an account</a></p>
+  </form>
+  <script src="/js/auth.js"></script>
+  <script>authForm('/api/auth/login');</script>
+</body>
+</html>

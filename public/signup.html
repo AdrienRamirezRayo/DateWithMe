@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join LeadRush</title>
+  <link rel="icon" href="/img/icon.png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Montserrat:wght@800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="auth">
+  <form class="auth-card" id="form">
+    <a href="/" class="logo"><img src="/img/logo.png" alt="LeadRush"></a>
+    <h1>Start getting leads</h1>
+    <p class="muted">Create your agent account. An admin will approve you before leads start flowing.</p>
+    <div class="field"><label for="name">Full name</label><input class="input" id="name" name="name" autocomplete="name" required></div>
+    <div class="field"><label for="email">Email</label><input class="input" id="email" name="email" type="email" autocomplete="email" required></div>
+    <div class="field"><label for="phone">Mobile phone <span class="muted">(live calls + text alerts ring here)</span></label><input class="input" id="phone" name="phone" type="tel" autocomplete="tel" required></div>
+    <div class="field"><label for="states">States you're licensed in</label><input class="input" id="states" name="states" placeholder="e.g. TX, FL, GA"></div>
+    <div class="field"><label for="password">Password</label><input class="input" id="password" name="password" type="password" minlength="8" autocomplete="new-password" required></div>
+    <p class="error" id="err"></p>
+    <button class="btn" type="submit">Create Account <span class="arrow">→</span></button>
+    <p class="muted small">Already have an account? <a href="/login">Log in</a></p>
+  </form>
+  <script src="/js/auth.js"></script>
+  <script>authForm('/api/auth/signup');</script>
+</body>
+</html>
