@@ -24,7 +24,7 @@ export function subscribe(req, res) {
   });
 }
 
-function send(userId, event, data) {
+export function sendToUser(userId, event, data) {
   for (const res of streams.get(userId) ?? []) {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
@@ -35,7 +35,7 @@ export function broadcastLead(event, lead) {
   const admins = db.prepare("SELECT id FROM users WHERE role = 'admin' AND status = 'active'").all();
   const targets = new Set(admins.map((a) => a.id));
   if (lead.agent_id) targets.add(lead.agent_id);
-  for (const id of targets) send(id, event, lead);
+  for (const id of targets) sendToUser(id, event, lead);
 }
 
 export const twilioConfigured = () =>

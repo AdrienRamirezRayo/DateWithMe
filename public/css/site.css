@@ -80,10 +80,15 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.25; }
 
 /* PRICING */
 .pricing { padding: 110px 0; background: var(--ink-2); }
+.muted-light { color: var(--muted); max-width: 620px; margin: 0 auto; }
 .plans { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 50px; align-items: stretch; }
 .plan { position: relative; display: flex; flex-direction: column; padding: 36px 30px; background: var(--panel); border: 1px solid var(--line); border-radius: 20px; }
+.plans.five { grid-template-columns: repeat(5, 1fr); gap: 16px; }
+.plans.five .plan { padding: 28px 22px; }
+.plans.five .price { font-size: 38px; }
+.plans.five ul { margin-bottom: 0; }
 .plan.featured { border-color: var(--red); box-shadow: 0 0 60px -20px var(--red-glow); transform: translateY(-10px); }
-.plan .tag { position: absolute; top: -13px; left: 50%; transform: translateX(-50%); background: var(--red); padding: 4px 14px; border-radius: 999px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+.plan .tag { white-space: nowrap; position: absolute; top: -13px; left: 50%; transform: translateX(-50%); background: var(--red); padding: 4px 14px; border-radius: 999px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
 .price { font: 900 46px var(--display); margin: 10px 0 20px; }
 .price span { font: 500 16px var(--font); color: var(--muted); }
 .plan ul { list-style: none; padding: 0; margin: 0 0 30px; display: grid; gap: 12px; color: #d4d4de; flex: 1; }
@@ -122,7 +127,7 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.25; }
   .hero-art { height: 420px; }
   .features { grid-template-columns: repeat(2, 1fr); row-gap: 30px; }
   .features article:nth-child(3) { border-left: 0; }
-  .plans { grid-template-columns: 1fr; max-width: 440px; margin-inline: auto; }
+  .plans, .plans.five { grid-template-columns: 1fr 1fr; max-width: 640px; margin-inline: auto; }
   .plan.featured { transform: none; }
   .badges { grid-template-columns: repeat(2, auto); }
 }
@@ -141,6 +146,7 @@ h3 { margin: 0 0 8px; font-size: 19px; line-height: 1.25; }
   .features { grid-template-columns: 1fr; }
   .features article { border-left: 0; padding: 0 20px; }
   .steps { grid-template-columns: 1fr; }
+  .plans, .plans.five { grid-template-columns: 1fr; }
   .steps li + li::before { content: '↓'; left: 50%; top: -30px; transform: translateX(-50%); }
   .footer small { margin-left: 0; }
 }

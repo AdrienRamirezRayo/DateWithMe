@@ -14,9 +14,12 @@
     <aside class="side" id="side">
       <a href="/" class="logo"><img src="/img/logo.png" alt="LeadRush"></a>
       <a href="#overview" class="nav-item" data-view="overview">📊 Overview</a>
+      <a href="#marketplace" class="nav-item" data-view="marketplace">🛒 Marketplace</a>
+      <a href="#calls" class="nav-item" data-view="calls">📞 Calls <span class="count" id="disputeCount" hidden></span></a>
       <a href="#leads" class="nav-item" data-view="leads">⚡ Leads <span class="count" id="newCount" hidden></span></a>
+      <a href="#wallet" class="nav-item" data-view="wallet">💳 Wallet</a>
       <a href="#agents" class="nav-item admin-only" data-view="agents" hidden>👥 Agents <span class="count" id="pendingCount" hidden></span></a>
-      <a href="#campaigns" class="nav-item admin-only" data-view="campaigns" hidden>🎯 Campaigns</a>
+      <a href="#sources" class="nav-item admin-only" data-view="sources" hidden>🎯 Ad Sources</a>
       <a href="#settings" class="nav-item" data-view="settings">⚙️ Settings</a>
       <div class="spacer"></div>
       <div class="me"><b id="meName"></b><br><span class="muted" id="meRole"></span> · <button id="logout">Log out</button></div>
@@ -27,6 +30,7 @@
         <button class="menu-btn" id="menuBtn" aria-label="Menu">☰</button>
         <h1 id="title">Overview</h1>
         <div class="right">
+          <a href="#wallet" class="balance" id="balance" title="Wallet balance"></a>
           <div class="avail" id="avail" role="switch" tabindex="0" title="When on, new leads and live calls are routed to you">
             <span class="dot"></span><span class="label-text" id="availText">Offline</span><span class="switch"></span>
           </div>

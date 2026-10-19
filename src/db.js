@@ -70,15 +70,63 @@ CREATE TABLE IF NOT EXISTS activities (
 );
 CREATE INDEX IF NOT EXISTS activities_lead ON activities(lead_id);
 
+CREATE TABLE IF NOT EXISTS campaigns (
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  vertical TEXT NOT NULL,                      -- final_expense | medicare | aca | term_life | mortgage
+  supplier TEXT NOT NULL DEFAULT '',
+  phone_number TEXT UNIQUE,                    -- inbound tracking number the ads use
+  price_cents INTEGER NOT NULL,
+  billable_seconds INTEGER NOT NULL DEFAULT 90,
+  states TEXT NOT NULL DEFAULT '',             -- states the supplier generates calls from, '' = all
+  description TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',       -- active | paused
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- An agent buying calls from a campaign, with their own filters.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+  active INTEGER NOT NULL DEFAULT 1,
+  daily_cap INTEGER NOT NULL DEFAULT 10,
+  start_hour INTEGER NOT NULL DEFAULT 9,
+  end_hour INTEGER NOT NULL DEFAULT 18,
+  days TEXT NOT NULL DEFAULT '12345',          -- 0 = Sunday … 6 = Saturday
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (user_id, campaign_id)
+);
+
 CREATE TABLE IF NOT EXISTS calls (
   id INTEGER PRIMARY KEY,
   call_sid TEXT UNIQUE,
   from_number TEXT NOT NULL DEFAULT '',
+  caller_state TEXT NOT NULL DEFAULT '',
   lead_id INTEGER REFERENCES leads(id) ON DELETE SET NULL,
   agent_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  status TEXT NOT NULL DEFAULT 'ringing',      -- ringing | connected | missed | voicemail
+  campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
+  queue TEXT NOT NULL DEFAULT '',              -- agent ids to try in order
+  status TEXT NOT NULL DEFAULT 'ringing',      -- ringing | connected | completed | missed | voicemail
   duration INTEGER,
+  price_cents INTEGER NOT NULL DEFAULT 0,      -- what the agent was charged (0 = not billable)
   recording_url TEXT,
+  dispute_status TEXT,                         -- pending | approved | denied
+  dispute_reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS calls_agent ON calls(agent_id, created_at);
+
+-- Wallet ledger. Balance on users is the running total of these rows.
+CREATE TABLE IF NOT EXISTS transactions (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  amount_cents INTEGER NOT NULL,               -- + credit, - debit
+  type TEXT NOT NULL,                          -- deposit | call | refund | adjustment
+  call_id INTEGER REFERENCES calls(id) ON DELETE SET NULL,
+  reference TEXT UNIQUE,                       -- idempotency key (Stripe session, call sid…)
+  note TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -87,6 +135,19 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 `);
+
+// Add columns introduced after a database was first created.
+function addColumn(table, column, ddl) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+}
+addColumn('users', 'balance_cents', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('users', 'timezone', "TEXT NOT NULL DEFAULT 'America/New_York'");
+for (const [col, ddl] of [
+  ['caller_state', "TEXT NOT NULL DEFAULT ''"], ['campaign_id', 'INTEGER REFERENCES campaigns(id)'],
+  ['queue', "TEXT NOT NULL DEFAULT ''"], ['price_cents', 'INTEGER NOT NULL DEFAULT 0'],
+  ['dispute_status', 'TEXT'], ['dispute_reason', 'TEXT'], ['ended_at', 'TEXT'],
+]) addColumn('calls', col, ddl);
 
 export function getSetting(key) {
   return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value;

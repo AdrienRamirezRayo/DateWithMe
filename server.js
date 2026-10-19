@@ -10,10 +10,23 @@ import {
 } from './src/leads.js';
 import { subscribe, broadcastLead, twilioConfigured } from './src/notify.js';
 import { twilio } from './src/twilio.js';
+import { VERTICALS, callsToday } from './src/campaigns.js';
+import {
+  applyTransaction, resolveDispute, createCheckout, verifyStripeSignature, handleStripeEvent,
+  stripeConfigured, MIN_DEPOSIT_CENTS, DISPUTE_WINDOW_HOURS,
+} from './src/wallet.js';
 
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+
+// Stripe needs the raw body to verify its signature, so this route comes before the JSON parser.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json', limit: '1mb' }), (req, res) => {
+  const raw = req.body.toString('utf8');
+  if (!verifyStripeSignature(raw, req.get('Stripe-Signature'))) return res.status(400).send('Bad signature');
+  handleStripeEvent(JSON.parse(raw));
+  res.json({ received: true });
+});
 app.use(express.json({ limit: '100kb' }));
 app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 
@@ -64,19 +77,24 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/me', requireUser, (req, res) => {
-  res.json({ user: publicUser(req.user), states: US_STATES, statuses: STATUSES });
+  res.json({ user: publicUser(req.user), states: US_STATES, statuses: STATUSES, verticals: VERTICALS });
 });
 
 app.patch('/api/me', requireUser, (req, res) => {
   const u = req.user;
   const b = req.body;
   if (b.available && u.status !== 'active') return bad(res, 'Your account is waiting for admin approval.');
-  db.prepare('UPDATE users SET name = ?, phone = ?, states = ?, available = ?, sms_alerts = ? WHERE id = ?').run(
+  let timezone = u.timezone;
+  if (b.timezone !== undefined) {
+    try { new Intl.DateTimeFormat('en-US', { timeZone: b.timezone }); timezone = clip(b.timezone, 60); } catch { return bad(res, 'Unknown timezone.'); }
+  }
+  db.prepare('UPDATE users SET name = ?, phone = ?, states = ?, available = ?, sms_alerts = ?, timezone = ? WHERE id = ?').run(
     b.name !== undefined ? clip(b.name, 80) || u.name : u.name,
     b.phone !== undefined ? normalizePhone(b.phone) : u.phone,
     b.states !== undefined ? normalizeStates(b.states) : u.states,
     b.available !== undefined ? (b.available ? 1 : 0) : u.available,
     b.sms_alerts !== undefined ? (b.sms_alerts ? 1 : 0) : u.sms_alerts,
+    timezone,
     u.id,
   );
   res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(u.id)) });
@@ -249,7 +267,13 @@ app.get('/api/stats', requireUser, (req, res) => {
     FROM leads WHERE ${scope} AND ${since} GROUP BY day ORDER BY day
   `).all(...args);
 
-  const out = { days, totals, daily };
+  const calls = db.prepare(`
+    SELECT COUNT(*) AS calls, SUM(price_cents > 0) AS billable, COALESCE(SUM(price_cents), 0) AS spend_cents,
+      AVG(CASE WHEN status = 'completed' THEN duration END) AS avg_duration
+    FROM calls WHERE ${scope} AND ${since} AND (dispute_status IS NULL OR dispute_status != 'approved')
+  `).get(...args);
+
+  const out = { days, totals, daily, calls };
   if (admin) {
     out.campaigns = db.prepare(`
       SELECT COALESCE(NULLIF(utm_source, ''), source) AS source, COALESCE(NULLIF(utm_campaign, ''), '—') AS campaign,
@@ -267,6 +291,8 @@ app.get('/api/stats', requireUser, (req, res) => {
     `).all();
     out.unassigned = db.prepare("SELECT COUNT(*) AS n FROM leads WHERE agent_id IS NULL AND status = 'new'").get().n;
     out.online = db.prepare("SELECT COUNT(*) AS n FROM users WHERE status = 'active' AND available = 1").get().n;
+    out.wallets_cents = db.prepare('SELECT COALESCE(SUM(balance_cents), 0) AS n FROM users').get().n;
+    out.disputes = db.prepare("SELECT COUNT(*) AS n FROM calls WHERE dispute_status = 'pending'").get().n;
   }
   res.json(out);
 });
@@ -302,6 +328,152 @@ app.patch('/api/agents/:id', requireAdmin, (req, res) => {
   res.json({ agent: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
 });
 
+app.post('/api/agents/:id/credit', requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) return bad(res, 'Agent not found.', 404);
+  const cents = Math.round(Number(req.body.amount) * 100);
+  if (!Number.isFinite(cents) || cents === 0) return bad(res, 'Enter an amount, e.g. 100 or -25.');
+  applyTransaction({
+    userId: id, amountCents: cents, type: 'adjustment', allowNegative: true,
+    note: clip(req.body.note, 200) || `${cents > 0 ? 'Credit' : 'Debit'} by ${req.user.name}`,
+  });
+  res.json({ balance_cents: db.prepare('SELECT balance_cents FROM users WHERE id = ?').get(id).balance_cents });
+});
+
+// ---------- Campaigns (pay-per-call marketplace) ----------
+
+function campaignInput(b, existing = {}) {
+  const v = {
+    name: b.name !== undefined ? clip(b.name, 100) : existing.name,
+    vertical: b.vertical !== undefined ? b.vertical : existing.vertical,
+    supplier: b.supplier !== undefined ? clip(b.supplier, 100) : existing.supplier ?? '',
+    phone_number: b.phone_number !== undefined ? normalizePhone(b.phone_number) || null : existing.phone_number ?? null,
+    price_cents: b.price !== undefined ? Math.round(Number(b.price) * 100) : existing.price_cents,
+    billable_seconds: b.billable_seconds !== undefined ? Math.max(0, Number.parseInt(b.billable_seconds, 10) || 0) : existing.billable_seconds ?? 90,
+    states: b.states !== undefined ? normalizeStates(b.states) : existing.states ?? '',
+    description: b.description !== undefined ? clip(b.description, 500) : existing.description ?? '',
+    status: ['active', 'paused'].includes(b.status) ? b.status : existing.status ?? 'active',
+  };
+  if (!v.name) return { error: 'Give the campaign a name.' };
+  if (!VERTICALS[v.vertical]) return { error: 'Pick a vertical.' };
+  if (!(v.price_cents > 0)) return { error: 'Set a price per call.' };
+  if (v.phone_number) {
+    const clash = db.prepare('SELECT id FROM campaigns WHERE phone_number = ? AND id != ?').get(v.phone_number, existing.id ?? 0);
+    if (clash) return { error: 'Another campaign already uses that phone number.' };
+  }
+  return { v };
+}
+
+app.get('/api/campaigns', requireUser, (req, res) => {
+  const admin = req.user.role === 'admin';
+  const campaigns = db.prepare(`
+    SELECT k.*, s.id AS sub_id, s.active AS sub_active, s.daily_cap, s.start_hour, s.end_hour, s.days,
+      (SELECT COUNT(*) FROM subscriptions WHERE campaign_id = k.id AND active = 1) AS buyers,
+      (SELECT COUNT(*) FROM calls WHERE campaign_id = k.id AND created_at >= datetime('now', '-30 days')) AS calls_30d
+    FROM campaigns k LEFT JOIN subscriptions s ON s.campaign_id = k.id AND s.user_id = ?
+    ${admin ? '' : "WHERE k.status = 'active'"} ORDER BY k.status, k.vertical, k.price_cents
+  `).all(req.user.id).map((c) => ({
+    ...c,
+    calls_today: c.sub_id ? callsToday(req.user.id, c.id, req.user.timezone) : 0,
+    ...(admin ? {} : { phone_number: undefined, buyers: undefined, calls_30d: undefined }),
+  }));
+  res.json({ campaigns });
+});
+
+app.post('/api/campaigns', requireAdmin, (req, res) => {
+  const { v, error } = campaignInput(req.body);
+  if (error) return bad(res, error);
+  const cols = Object.keys(v);
+  const { lastInsertRowid } = db.prepare(`INSERT INTO campaigns (${cols}) VALUES (${cols.map(() => '?')})`).run(...Object.values(v));
+  res.json({ campaign: db.prepare('SELECT * FROM campaigns WHERE id = ?').get(Number(lastInsertRowid)) });
+});
+
+app.patch('/api/campaigns/:id', requireAdmin, (req, res) => {
+  const existing = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(Number(req.params.id));
+  if (!existing) return bad(res, 'Campaign not found.', 404);
+  const { v, error } = campaignInput(req.body, existing);
+  if (error) return bad(res, error);
+  db.prepare(`UPDATE campaigns SET ${Object.keys(v).map((k) => `${k} = ?`)} WHERE id = ?`).run(...Object.values(v), existing.id);
+  res.json({ campaign: db.prepare('SELECT * FROM campaigns WHERE id = ?').get(existing.id) });
+});
+
+// An agent turning a campaign on/off for themselves and setting their buying filters.
+app.put('/api/campaigns/:id/subscription', requireUser, (req, res) => {
+  const campaign = db.prepare("SELECT * FROM campaigns WHERE id = ? AND status = 'active'").get(Number(req.params.id));
+  if (!campaign) return bad(res, 'Campaign not found.', 404);
+  if (req.user.status !== 'active') return bad(res, 'Your account is waiting for admin approval.');
+  const b = req.body;
+  const hour = (h, d) => (Number.isInteger(Number(h)) && h !== '' && h !== null && Number(h) >= 0 && Number(h) <= 23 ? Number(h) : d);
+  const cur = db.prepare('SELECT * FROM subscriptions WHERE user_id = ? AND campaign_id = ?').get(req.user.id, campaign.id) || {};
+  const sub = {
+    active: b.active !== undefined ? (b.active ? 1 : 0) : cur.active ?? 1,
+    daily_cap: b.daily_cap !== undefined ? Math.min(500, Math.max(1, Number.parseInt(b.daily_cap, 10) || 1)) : cur.daily_cap ?? 10,
+    start_hour: hour(b.start_hour, cur.start_hour ?? 9),
+    end_hour: hour(b.end_hour, cur.end_hour ?? 18),
+    days: b.days !== undefined ? [...new Set(String(b.days).replace(/[^0-6]/g, ''))].sort().join('') : cur.days ?? '12345',
+  };
+  if (!sub.days) return bad(res, 'Pick at least one day.');
+  db.prepare(`
+    INSERT INTO subscriptions (user_id, campaign_id, active, daily_cap, start_hour, end_hour, days) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, campaign_id) DO UPDATE SET active = excluded.active, daily_cap = excluded.daily_cap,
+      start_hour = excluded.start_hour, end_hour = excluded.end_hour, days = excluded.days
+  `).run(req.user.id, campaign.id, sub.active, sub.daily_cap, sub.start_hour, sub.end_hour, sub.days);
+  res.json({ subscription: sub });
+});
+
+// ---------- Calls, returns ----------
+
+app.get('/api/calls', requireUser, (req, res) => {
+  const admin = req.user.role === 'admin';
+  const where = [];
+  const args = [];
+  if (!admin || req.query.scope === 'mine') { where.push('c.agent_id = ?'); args.push(req.user.id); }
+  if (req.query.dispute === 'pending') where.push("c.dispute_status = 'pending'");
+  if (req.query.billed === '1') where.push('c.price_cents > 0');
+  const calls = db.prepare(`
+    SELECT c.*, k.name AS campaign_name, k.vertical, k.billable_seconds, u.name AS agent_name,
+      l.first_name, l.last_name
+    FROM calls c LEFT JOIN campaigns k ON k.id = c.campaign_id LEFT JOIN users u ON u.id = c.agent_id
+    LEFT JOIN leads l ON l.id = c.lead_id
+    ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.id DESC LIMIT 300
+  `).all(...args);
+  res.json({ calls, dispute_window_hours: DISPUTE_WINDOW_HOURS });
+});
+
+app.post('/api/calls/:id/dispute', requireUser, (req, res) => {
+  const call = db.prepare('SELECT * FROM calls WHERE id = ?').get(Number(req.params.id));
+  if (!call || call.agent_id !== req.user.id) return bad(res, 'Call not found.', 404);
+  if (!(call.price_cents > 0)) return bad(res, 'Only billed calls can be returned.');
+  if (call.dispute_status) return bad(res, 'A return was already requested for this call.');
+  const age = (Date.now() - new Date(`${call.created_at.replace(' ', 'T')}Z`)) / 36e5;
+  if (age > DISPUTE_WINDOW_HOURS) return bad(res, `Returns must be requested within ${DISPUTE_WINDOW_HOURS} hours.`);
+  const reason = clip(req.body.reason, 300);
+  if (!reason) return bad(res, 'Tell us why this call should be returned.');
+  db.prepare("UPDATE calls SET dispute_status = 'pending', dispute_reason = ? WHERE id = ?").run(reason, call.id);
+  res.json({ ok: true });
+});
+
+app.post('/api/calls/:id/resolve', requireAdmin, (req, res) => {
+  if (!resolveDispute(Number(req.params.id), !!req.body.approve)) return bad(res, 'No pending return on that call.');
+  res.json({ ok: true });
+});
+
+// ---------- Wallet ----------
+
+app.get('/api/wallet', requireUser, (req, res) => {
+  const transactions = db.prepare('SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 200').all(req.user.id);
+  const { balance_cents } = db.prepare('SELECT balance_cents FROM users WHERE id = ?').get(req.user.id);
+  res.json({ balance_cents, transactions, stripe: stripeConfigured(), min_deposit_cents: MIN_DEPOSIT_CENTS });
+});
+
+app.post('/api/wallet/checkout', requireUser, async (req, res) => {
+  if (!stripeConfigured()) return bad(res, 'Card payments are not set up yet. Ask your admin to add funds.');
+  const cents = Math.round(Number(req.body.amount) * 100);
+  if (!(cents >= MIN_DEPOSIT_CENTS) || cents > 5000000) return bad(res, `Minimum deposit is $${MIN_DEPOSIT_CENTS / 100}.`);
+  const baseUrl = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
+  res.json({ url: await createCheckout({ user: req.user, amountCents: cents, baseUrl }) });
+});
+
 app.get('/api/settings', requireAdmin, (req, res) => {
   const url = process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`;
   res.json({
@@ -309,6 +481,7 @@ app.get('/api/settings', requireAdmin, (req, res) => {
     public_url: url,
     twilio: twilioConfigured(),
     twilio_number: process.env.TWILIO_PHONE_NUMBER || null,
+    stripe: stripeConfigured(),
   });
 });
 
